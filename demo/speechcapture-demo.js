@@ -291,4 +291,4 @@ var resetSpeakingRightNowIndicator = function () {
     }
 };
 
-turnOffSpeakingRightNowIndicator();
+resetSpeakingRightNowIndicator();
