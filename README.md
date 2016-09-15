@@ -8,8 +8,8 @@ Currently this library only supports the Apache Cordova plugin [cordova-plugin-a
 Downloads:
 Include any of the following sources in your project:
 
-- [speechcapture.js](https://raw.githubusercontent.com/edimuj/speechcapture/src/speechcapture.js)
-- [speechcapture.min.js](https://raw.githubusercontent.com/edimuj/speechcapture/src/speechcapture.min.js)
+- [speechcapture.js](https://raw.githubusercontent.com/edimuj/speechcapture/master/src/speechcapture.js)
+- [speechcapture.min.js](https://raw.githubusercontent.com/edimuj/speechcapture/master/dist/speechcapture.min.js)
 
 ## API
 
