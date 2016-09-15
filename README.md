@@ -24,7 +24,7 @@ speechcapture.start(cfg, speechCapturedCB, errorCB, speechStatusCB);
 Implement a callback for handling the captured speech.
 
 ```javascript
-function speechCapturedCB( audioData ) = {
+function speechCapturedCB( audioData ) {
   // Do something with the captured audio data.
 }
 ```
