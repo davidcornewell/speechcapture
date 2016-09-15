@@ -165,7 +165,8 @@ var debugData = speechcapture.getMonitoringData();
 ```
 
 ### getAudioContext
-If 
+If the `audioResultType` is specified as `speechcapture.AUDIO_RESULT_TYPE.WEBAUDIO_AUDIOBUFFER`, an audioContext is required, which means that the browser __must have Web Audio Support__. You can either specify an __audioContext__ of your own or let the speechcapture library create one for you. The created audioContext can then be aquired using this function.
+
 ```javascript
 var audioCtx = speechcapture.getAudioContext();
 ```
