@@ -1,7 +1,7 @@
 # Speech Capture
 Speech detection/capture library used to detect and capture speech from an incoming audio stream of data.
 
-Currently supports [cordova-plugin-audioinput](https://github.com/edimuj/cordova-plugin-audioinput) as audio input from the microphone.
+Currently this library only supports the Apache Cordova plugin [cordova-plugin-audioinput](https://github.com/edimuj/cordova-plugin-audioinput) as audio input from the microphone.
 
 ## Installation
 
