@@ -111,11 +111,11 @@ var startCapture = function () {
                 sampleRate: sampleRate,
                 bufferSize: bufferSize,
                 compressPauses: compressPauses,
-                debugAlerts: true, // Just for debug
+                debugAlerts: false, // Just for debug
                 debugConsole: false // Just for debug
             };
 
-            alert("Starting capture with cfg: " + JSON.stringify(captureCfg));
+            //alert("Starting capture with cfg: " + JSON.stringify(captureCfg));
 
             speechcapture.start(captureCfg, onSpeechCaptured, onSpeechError, onSpeechStatus);
 
