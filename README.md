@@ -1,7 +1,7 @@
 # Speech Capture
 Speech detection/capture library used to detect and capture speech from an incoming audio stream of data.
 
-Currently this library only supports the Apache Cordova plugin [cordova-plugin-audioinput](https://github.com/edimuj/cordova-plugin-audioinput) as audio input from the microphone.
+Currently this library only supports the __Apache Cordova__ plugin __[cordova-plugin-audioinput](https://github.com/edimuj/cordova-plugin-audioinput)__ as audio input from the microphone.
 
 ## Installation
 
@@ -120,7 +120,7 @@ cfg = {
 ```
 
 ##### audioResultType WEBAUDIO_AUDIOBUFFER
-If the audioResultType is specified as speechcapture.AUDIO_RESULT_TYPE.WEBAUDIO_AUDIOBUFFER, an audioContext is required, which means that the browser must have Web Audio Support. You can either specify an audioContext of your own or let the speechcapture library create one for you. The created audioContext can then be aquired using `getAudioContext`.
+If the `audioResultType` is specified as `speechcapture.AUDIO_RESULT_TYPE.WEBAUDIO_AUDIOBUFFER`, an audioContext is required, which means that the browser __must have Web Audio Support__. You can either specify an __audioContext__ of your own or let the speechcapture library create one for you. The created audioContext can then be aquired using `getAudioContext`.
 
 ### stop
 Stops the capturing. If speech is ongoing when stopped, a last capture output will be created as long as it is within the configuration constraints specified, when the capturing was started.
@@ -169,6 +169,9 @@ If
 ```javascript
 var audioCtx = speechcapture.getAudioContext();
 ```
+
+## Example(s)
+An example of how to use the plugin can be found in the __demo__ folder. The demo __must run__ as an __Apache Cordova__ app in order to work.
 
 ## Contributing
 This project is open-source, so contributions are welcome. Just ensure that your changes doesn't break backward compatibility!
