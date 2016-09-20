@@ -226,5 +226,9 @@ This project is open-source, so contributions are welcome. Just ensure that your
 [Register a new issue](https://github.com/edimuj/speechcapture/issues/new)
 
 
+## Donate
+If you find this library useful, ensure that it is kept alive by donating:
+[![paypal](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=R9WGMBB2BMS34)
+
 ## License
 MIT
