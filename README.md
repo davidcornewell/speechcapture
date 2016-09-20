@@ -159,7 +159,7 @@ cfg = {
   //
   // For speech detection either VOICE_COMMUNICATION (7) or VOICE_RECOGNITION (6) is preferred.
   //
-  audioSourceType: audioinput.AUDIOSOURCE_TYPE.DEFAULT
+  audioSourceType: audioinput.AUDIOSOURCE_TYPE.DEFAULT,
   
   // Prefer audio input using getUserMedia and use cordova-plugin-audioinput only as a fallback. Only useful if both are supported by the current platform.
   preferGUM: false,
