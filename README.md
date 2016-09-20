@@ -1,7 +1,7 @@
 # Speech Capture
 Speech detection and capture library used to detect and capture speech from an incoming audio stream of data, typically from the microphone.
 
-The library calculates the overall ambient audio levels and uses this as a baseline. Together with the threshold for speech detection, 
+When started, the overall ambient audio level is continuously calculated from the characteristics of the audio input. The ambient audio level together with the threshold for speech detection, are used to generate a dynamic threshold in real-time. When the current audio levels surpasses the dynamic threshold, speech capture starts and ends when the current levels decreases below the threshold. A number of parameters also allows you to, among other things, specify the minimum and maximum length of captured speech as well as the allowed delay before capture is stopped. This particular method seems to provide a good balance between performance and quality.
 
 Currently this library supports two types of audio input:
 * __[getUserMedia](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/getUserMedia)__
