@@ -1,5 +1,7 @@
 # Speech Capture
-Speech detection/capture library used to detect and capture speech from an incoming audio stream of data, typically from the microphone.
+Speech detection and capture library used to detect and capture speech from an incoming audio stream of data, typically from the microphone.
+
+The library calculates the overall ambient audio levels and uses this as a baseline. Together with the threshold for speech detection, 
 
 Currently this library supports two types of audio input:
 * __[getUserMedia](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/getUserMedia)__
@@ -131,16 +133,33 @@ cfg = {
   // Removes long pauses from the captured output.
   compressPauses: false,
   
-  // Do not capture any data, just speech detection events. The result audio result type is automatically set to speechcapture.AUDIO_RESULT_TYPE.DETECTION_ONLY.
-  detectOnly: false
+  // Do not capture any data, just speech detection events. 
+  // The result audio result type is automatically set to speechcapture.AUDIO_RESULT_TYPE.DETECTION_ONLY.
+  detectOnly: false,
   
   // Specifies the type of result produce when speech is captured.
   // For convenience, use the speechcapture.AUDIO_RESULT_TYPE constants to set this parameter:
-  // -WAV_BLOB - WAV encoded Audio blobs
-  // -WEBAUDIO_AUDIOBUFFER - Web Audio API AudioBuffers
-  // -RAW_DATA - Float32Arrays with the raw audio data
+  // -WAV_BLOB (1) - WAV encoded Audio blobs
+  // -WEBAUDIO_AUDIOBUFFER (2) - Web Audio API AudioBuffers
+  // -RAW_DATA (3) - Float32Arrays with the raw audio data
+  // -DETECTION_ONLY (4) - Used automatically when detectOnly is true
   audioResultType: speechcapture.AUDIO_RESULT_TYPE.WAV_BLOB
-  audioContext: null
+  audioContext: null,
+  
+  // Only applicable if cordova-plugin-audioinput is used as the audio source.
+  // Specifies the type of the type of source audio your app requires.
+  //
+  // For convenience, use the audioinput.AUDIOSOURCE_TYPE constants of the audioinput plugin to set this parameter:
+  // -DEFAULT (0) - The default audio source of the device.
+  // -CAMCORDER (5) - Microphone audio source with same orientation as camera if available.
+  // -UNPROCESSED (9) - Unprocessed sound if available.
+  // -VOICE_COMMUNICATION (7) - Tuned for voice communications such as VoIP.
+  // -MIC (1) - Microphone audio source. (Android only)
+  // -VOICE_RECOGNITION (6) - Tuned for voice recognition if available (Android only)
+  //
+  // For speech detection either VOICE_COMMUNICATION (7) or VOICE_RECOGNITION (6) is preferred.
+  //
+  audioSourceType: audioinput.AUDIOSOURCE_TYPE.DEFAULT
   
   // Prefer audio input using getUserMedia and use cordova-plugin-audioinput only as a fallback. Only useful if both are supported by the current platform.
   preferGUM: false,
