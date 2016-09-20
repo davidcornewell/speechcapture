@@ -434,8 +434,18 @@ window.speechcapture = (function () {
      */
     var _calculateTimePeriods = function (sampleRate, bufferSize) {
         try {
+            _cfg.bufferSize = bufferSize;
             _audioInputFrequency = sampleRate / bufferSize;
             _bufferLengthInSeconds = 1 / _audioInputFrequency;
+
+            /*var mon = {
+                sampleRate: sampleRate,
+                bufferSize: bufferSize,
+                _audioInputFrequency: _audioInputFrequency,
+                _bufferLengthInSeconds: _bufferLengthInSeconds
+            };
+
+            alert("_calculateTimePeriods: " + JSON.stringify(mon));*/
 
             _calculateAnalysisBuffers(bufferSize, _bufferLengthInSeconds, _cfg.analysisChunkLength);
         }
@@ -456,7 +466,7 @@ window.speechcapture = (function () {
         try {
             var inputBufferSizeInMs = bufferLengthInSeconds * 1000;
             _noOfAnalysisBuffersPerIteration = Math.ceil(inputBufferSizeInMs / analysisChunkLength);
-            _analysisBufferSize = Math.ceil(bufferSize / _noOfAnalysisBuffersPerIteration); // parseInt
+            _analysisBufferSize = Math.ceil(bufferSize / _noOfAnalysisBuffersPerIteration);
             _analysisBufferLengthInS = bufferLengthInSeconds / _noOfAnalysisBuffersPerIteration;
 
             _speechAllowedDelayChunks = Math.round(_cfg.speechDetectionAllowedDelay / analysisChunkLength);
@@ -464,6 +474,22 @@ window.speechcapture = (function () {
             _speechMaximumLengthChunks = Math.round(_cfg.speechDetectionMaximum / analysisChunkLength);
 
             _getNextBufferDuration = analysisChunkLength;
+
+            /*var mon = {
+                bufferSize: bufferSize,
+                bufferLengthInSeconds: bufferLengthInSeconds,
+                analysisChunkLength: analysisChunkLength,
+                inputBufferSizeInMs: inputBufferSizeInMs,
+                _noOfAnalysisBuffersPerIteration: _noOfAnalysisBuffersPerIteration,
+                _analysisBufferSize: _analysisBufferSize,
+                _analysisBufferLengthInS: _analysisBufferLengthInS,
+                _speechAllowedDelayChunks: _speechAllowedDelayChunks,
+                _speechMinimumLengthChunks: _speechMinimumLengthChunks,
+                _speechMaximumLengthChunks: _speechMaximumLengthChunks,
+                _getNextBufferDuration: _getNextBufferDuration
+            };
+
+            alert("_calculateAnalysisBuffers: " + JSON.stringify(mon));*/
         }
         catch (ex) {
             _callErrorCB("_calculateAnalysisBuffers exception: " + ex);
@@ -598,6 +624,13 @@ window.speechcapture = (function () {
      */
     var _iteratedAndMonitorInputBuffer = function (audioInputBuffer) {
         try {
+            var len = audioInputBuffer.length;
+
+            // If buffer isn't of the expected size, recalculate everything based on the new length
+            if(audioInputBuffer.length !== _cfg.bufferSize) {
+                _calculateTimePeriods(_cfg.sampleRate, audioInputBuffer.length);
+            }
+
             for (var i = 0; i < _noOfAnalysisBuffersPerIteration; i++) {
                 var startIdx = i * _analysisBufferSize,
                     endIdx = startIdx + _analysisBufferSize;
@@ -606,7 +639,9 @@ window.speechcapture = (function () {
                     endIdx = audioInputBuffer.length;
                 }
 
-                if (!_monitor(audioInputBuffer.slice(startIdx, endIdx))) {
+                var buf = audioInputBuffer.slice(startIdx, endIdx);
+
+                if (!_monitor(buf)) {
                     return; // Ignore more speech
                 }
             }
@@ -1197,6 +1232,25 @@ window.speechcapture = (function () {
 ();
 
 
+// Shim for Float32Array.prototype.slice
+if (!Float32Array.prototype.slice) {
+    Float32Array.prototype.slice = function (begin, end) {
+        if(!end) {
+            end = this.length;
+        }
+
+        //alert("Float32Array.prototype.slice begin: " + begin + ", end: " + end + ", len: " + this.length + " => " + (end - begin));
+
+        var target = new Float32Array(end - begin);
+
+        for (var i = 0; i < begin + end; ++i) {
+            target[i] = this[begin + i];
+        }
+        return target;
+    };
+}
+
+
 /**
  *
  * @returns {Float32Array}
@@ -1243,6 +1297,7 @@ Float32Array.prototype.concat = function () {
 };
 
 
+
 /**
  *
  * @type {{encode}}
@@ -1257,7 +1312,6 @@ var wavEncoder = (function () {
      * @returns {DataView}
      */
     var encode = function (samples, sampleRate, channels) {
-
         var numFrames = samples.length,
             numChannels = channels || 1,
             bytesPerSample = 2,
