@@ -8,15 +8,20 @@ var timerInterVal = null,
     totalNoOfSpeechEvents = 0,
     totalNoOfSpeechCaptured = 0,
     totalNoOfSpeechErrors = 0,
-    captureCfg = {};
+    captureCfg = {},
+
+    availableCordova = false,
+    availableAudioInputPlugin = false,
+    availableSpeechCapture = false;
 
 /**
  * Called when speech has been captured
  * @param audioBuffer
+ * @param type speechcapture.AUDIO_RESULT_TYPE
  */
-function onSpeechCaptured(audioBuffer) {
+function onSpeechCaptured(audioBuffer, type) {
     totalNoOfSpeechCaptured++;
-    handleAudioBuffer(audioBuffer);
+    handleAudioBuffer(audioBuffer, type);
 }
 
 /**
@@ -27,6 +32,7 @@ function onSpeechError(error) {
     totalNoOfSpeechErrors++;
     alert("onSpeechError event recieved: " + JSON.stringify(error));
 }
+
 
 /**
  * Called when the speechcapture status changes
@@ -41,6 +47,7 @@ function onSpeechStatus(code) {
             break;
         case speechcapture.STATUS.CAPTURE_STOPPED:
             consoleMessage("Capture Stopped!");
+            turnOffSpeakingRightNowIndicator();
             break;
         case speechcapture.STATUS.SPEECH_STARTED:
             consoleMessage("Speech Started!");
@@ -88,7 +95,7 @@ var startCapture = function () {
                 audioSourceType = audioSourceElement.options[audioSourceElement.selectedIndex].value,
 
                 audioResultTypeElement = document.getElementById("audioResultType"),
-                audioResultType = audioResultTypeElement.options[audioResultTypeElement.selectedIndex].value,
+                audioResultType = parseInt(audioResultTypeElement.options[audioResultTypeElement.selectedIndex].value),
 
                 speechThreshold = parseInt(document.getElementById('speechThreshold').value),
                 speechMin = parseInt(document.getElementById('minSpeechLength').value),
@@ -97,8 +104,15 @@ var startCapture = function () {
                 analysisChunkLength = parseInt(document.getElementById('analysisChunkLength').value),
                 sampleRate = parseInt(document.getElementById('sampleRate').value),
                 bufferSize = parseInt(document.getElementById('bufferSize').value),
+
                 compressPausesElement = document.getElementById("compressPauses"),
-                compressPauses = (parseInt(compressPausesElement.options[compressPausesElement.selectedIndex].value) === 1);
+                compressPauses = (parseInt(compressPausesElement.options[compressPausesElement.selectedIndex].value) === 1),
+
+                preferGUMElement = document.getElementById("preferGUM"),
+                preferGUM = (parseInt(preferGUMElement.options[preferGUMElement.selectedIndex].value) === 1),
+
+                detectOnlyElement = document.getElementById("detectOnly"),
+                detectOnly = (parseInt(detectOnlyElement.options[detectOnlyElement.selectedIndex].value) === 1);
 
             captureCfg = {
                 audioSourceType: parseInt(audioSourceType),
@@ -111,16 +125,16 @@ var startCapture = function () {
                 sampleRate: sampleRate,
                 bufferSize: bufferSize,
                 compressPauses: compressPauses,
-                debugAlerts: false, // Just for debug
-                debugConsole: false // Just for debug
+                preferGUM: preferGUM,
+                detectOnly: detectOnly,
+                debugAlerts: true, // Just for debug
+                debugConsole: true // Just for debug
             };
-
-            //alert("Starting capture with cfg: " + JSON.stringify(captureCfg));
 
             speechcapture.start(captureCfg, onSpeechCaptured, onSpeechError, onSpeechStatus);
 
             // Throw previously created audio
-            document.getElementById("recording-list").innerHTML = "...";
+            document.getElementById("recording-list").innerHTML = "";
 
             // Start the Interval that outputs time and debug data while capturing
             //
@@ -128,7 +142,7 @@ var startCapture = function () {
                 if (speechcapture.isCapturing()) {
                     document.getElementById("infoTimer").innerHTML = "" +
                         new Date().toTimeString().replace(/.*(\d{2}:\d{2}:\d{2}).*/, "$1") +
-                        "| Status:" + totalNoOfSpeechEvents + " | Captured:" + totalNoOfSpeechCaptured + " | Error:" + totalNoOfSpeechErrors + "<br>" +
+                        "| Events:" + totalNoOfSpeechEvents + " | Captured:" + totalNoOfSpeechCaptured + " | Error:" + totalNoOfSpeechErrors + "<br>" +
                         "dB: " + speechcapture.getCurrentVolume();
 
                     document.getElementById("status-list").innerHTML = "" +
@@ -170,21 +184,29 @@ var stopCapture = function () {
 /**
  *
  * @param audioBuffer
+ * @param type speechcapture.AUDIO_RESULT_TYPE
  */
-var handleAudioBuffer = function (audioBuffer) {
+var handleAudioBuffer = function (audioBuffer, type) {
     try {
-        switch (captureCfg.audioSourceType) {
+        switch (type) {
             case speechcapture.AUDIO_RESULT_TYPE.WEBAUDIO_AUDIOBUFFER:
-                // @todo: Implement this
+                appendWebAudioBuffer(audioBuffer);
                 break;
 
             case speechcapture.AUDIO_RESULT_TYPE.RAW_DATA:
-                // @todo: Implement this
+                appendRAWAudioBuffer(audioBuffer);
+                break;
+
+            case speechcapture.AUDIO_RESULT_TYPE.WAV_BLOB:
+                appendWAVAudioBuffer(audioBuffer);
+                break;
+
+            case speechcapture.AUDIO_RESULT_TYPE.DETECTION_ONLY:
+                appendDetectionOnlyCapture();
                 break;
 
             default:
-            case speechcapture.AUDIO_RESULT_TYPE.WAV_BLOB:
-                appendWAVAudioBuffer(audioBuffer);
+                alert("handleAudioBuffer - Unknown type of Audio result: " + captureCfg.audioSourceType);
                 break;
         }
     }
@@ -212,7 +234,81 @@ var appendWAVAudioBuffer = function (audioBuffer) {
         consoleMessage("Audio added...");
     }
     catch (e) {
-        alert("appendAudioBuffer ex: " + e);
+        alert("appendWAVAudioBuffer ex: " + e);
+    }
+};
+
+
+
+/**
+ *
+ * @param audioBuffer
+ */
+var appendRAWAudioBuffer = function (audioBuffer) {
+    try {
+        var div = document.createElement("div"),
+            length = audioBuffer.length;
+        div.innerHTML = 'Raw Audio (' + length + " bytes)";
+        div.className = 'audio-element';
+
+        document.getElementById("recording-list").appendChild(div);
+        consoleMessage("Raw Audio Data added...");
+    }
+    catch (e) {
+        alert("appendRAWAudioBuffer ex: " + e);
+    }
+};
+
+
+/**
+ *
+ * @param audioBuffer
+ */
+var appendWebAudioBuffer = function (audioBuffer) {
+    try {
+        var btn = document.createElement("div"),
+            duration = audioBuffer.duration;
+        btn.innerHTML = 'Play (' + parseFloat(duration).toFixed(1) + "s)";
+        btn.className = 'audio-element';
+
+        btn.href ="#";
+
+        // Play the audio when tapped/clicked
+        btn.onclick = function(){
+            try {
+                var source = speechcapture.getAudioContext().createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(speechcapture.getAudioContext().destination);
+                source.start();
+            }
+            catch(e) {
+                alert("appendWebAudioBuffer exception: " + e);
+            }
+        };
+
+        document.getElementById("recording-list").appendChild(btn);
+        consoleMessage("Audio added...");
+    }
+    catch (e) {
+        alert("appendWAVAudioBuffer ex: " + e);
+    }
+};
+
+
+/**
+ *
+ */
+var appendDetectionOnlyCapture = function () {
+    try {
+        var div = document.createElement("div");
+        div.innerHTML = 'Detection Event';
+        div.className = 'audio-element';
+
+        document.getElementById("recording-list").appendChild(div);
+        consoleMessage("Detection Event added...");
+    }
+    catch (e) {
+        alert("appendDetectionOnlyCapture ex: " + e);
     }
 };
 
@@ -231,21 +327,30 @@ var initUIEvents = function () {
  */
 var onDeviceReady = function () {
 
+    availableSpeechCapture = true;
+    availableCordova = true;
+    availableAudioInputPlugin = true;
+
     if (!window.speechcapture) {
-        consoleMessage("Missing: speechcapture library!");
-        disableAllButtons();
+        availableSpeechCapture = false;
     }
-    else if (!window.cordova) {
-        consoleMessage("Missing: cordova!");
-        disableAllButtons();
+
+    if (!window.cordova) {
+        availableCordova = false;
     }
-    else if (!window.audioinput) {
-        consoleMessage("Missing: cordova-plugin-audioinput!");
-        disableAllButtons();
+
+    if (!window.audioinput) {
+        availableAudioInputPlugin = false;
     }
-    else {
+
+
+    if(availableSpeechCapture) {
         initUIEvents();
         consoleMessage("Use 'Start Capture' to begin...");
+    }
+    else {
+        consoleMessage("Missing: speechcapture library!");
+        disableAllButtons();
     }
 };
 

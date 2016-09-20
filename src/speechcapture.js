@@ -19,7 +19,8 @@ window.speechcapture = (function () {
     var AUDIO_RESULT_TYPE = {
             WAV_BLOB: 1,
             WEBAUDIO_AUDIOBUFFER: 2,
-            RAW_DATA: 3
+            RAW_DATA: 3,
+            DETECTION_ONLY: 4
         },
 
         STATUS = {
@@ -40,6 +41,7 @@ window.speechcapture = (function () {
             MISSING_PARAMETER: 2,
             NO_WEB_AUDIO_SUPPORT: 3,
             CAPTURE_ALREADY_STARTED: 4,
+            AUDIOINPUT_NOT_AVAILABLE: 5,
             UNSPECIFIED: 999
         },
 
@@ -60,9 +62,13 @@ window.speechcapture = (function () {
             SPEECH_DETECTION_ANALYSIS_CHUNK_LENGTH: 100, // mS
 
             AUDIO_RESULT_TYPE: 1,
+            PREFER_GET_USER_MEDIA: false,
 
             DEBUG_ALERTS: false,
-            DEBUG_CONSOLE: false
+            DEBUG_CONSOLE: false,
+
+            GETUSERMEDIA_ACTIVE: true,
+            DETECT_ONLY: false
         };
 
 
@@ -76,11 +82,7 @@ window.speechcapture = (function () {
      */
     var start = function (cfg, speechCapturedCB, errorCB, speechStatusCB) {
 
-        if (!window.audioinput) {
-            throw "error: Requires 'cordova-plugin-audioinput'";
-        }
-
-        if (!audioinput.isCapturing()) {
+        if (!_captureRunning()) {
 
             if (!speechCapturedCB) {
                 _lastErrorCode = ERROR_CODE.MISSING_PARAMETER;
@@ -138,22 +140,25 @@ window.speechcapture = (function () {
             _cfg.debugAlerts = cfg.debugAlerts || DEFAULT.DEBUG_ALERTS;
             _cfg.debugConsole = cfg.debugConsole || DEFAULT.DEBUG_CONSOLE;
 
-            if (_cfg.audioResultType === AUDIO_RESULT_TYPE.WEBAUDIO_AUDIOBUFFER) {
-                if (!_initWebAudio(_cfg.audioContext)) {
-                    _lastErrorCode = ERROR_CODE.NO_WEB_AUDIO_SUPPORT;
-                    throw "error: audioResultType is WEBAUDIO_AUDIOBUFFER, but Web Audio not supported on this platform!";
+            _cfg.preferGUM = cfg.preferGUM || DEFAULT.PREFER_GET_USER_MEDIA;
+            _cfg.getUserMediaActive = DEFAULT.GETUSERMEDIA_ACTIVE;
+            _cfg.detectOnly = cfg.detectOnly || DEFAULT.DETECT_ONLY;
+
+            if (_cfg.detectOnly) {
+                _cfg.audioResultType = AUDIO_RESULT_TYPE.DETECTION_ONLY;
+            }
+
+            if (_cfg.audioResultType === AUDIO_RESULT_TYPE.WEBAUDIO_AUDIOBUFFER || _cfg.preferGUM || !window.audioinput) {
+                if (!_initWebAudio(_cfg.audioContext, _cfg.preferGUM)) {
+                    if (_cfg.audioResultType === AUDIO_RESULT_TYPE.WEBAUDIO_AUDIOBUFFER) {
+                        _lastErrorCode = ERROR_CODE.NO_WEB_AUDIO_SUPPORT;
+                        throw "error: audioResultType is WEBAUDIO_AUDIOBUFFER, but Web Audio not supported on this platform!";
+                    }
                 }
             }
 
+            _calculateTimePeriods(_cfg.sampleRate, _cfg.bufferSize);
             _resetAll();
-
-            // Subscribe to audioinput events
-            //
-            window.removeEventListener('audioinput', onAudioInputCapture, false);
-            window.addEventListener('audioinput', onAudioInputCapture, false);
-
-            window.removeEventListener('audioinputerror', onAudioInputError, false);
-            window.addEventListener('audioinputerror', onAudioInputError, false);
 
             // Configuration for the cordova-audioinput-plugin
             //
@@ -166,14 +171,31 @@ window.speechcapture = (function () {
                 streamToWebAudio: false
             };
 
-            // Start the cordova-audioinput-plugin capture
-            //
-            audioinput.start(_captureCfg);
+            if (_getUserMediaMode) {
+                _startMediaStreamSource();
 
-            _calculateTimePeriods(_cfg.sampleRate, _cfg.bufferSize);
-            _getNextBuffer();
+            }
+            else if (window.audioinput) {
+                // Subscribe to audioinput events
+                //
+                window.removeEventListener('audioinput', onAudioInputCapture, false);
+                window.addEventListener('audioinput', onAudioInputCapture, false);
 
-            _callSpeechStatusCB(STATUS.CAPTURE_STARTED);
+                window.removeEventListener('audioinputerror', onAudioInputError, false);
+                window.addEventListener('audioinputerror', onAudioInputError, false);
+
+                // Start the cordova-audioinput-plugin capture
+                //
+                audioinput.start(_captureCfg);
+
+                _getNextBuffer();
+
+                _callSpeechStatusCB(STATUS.CAPTURE_STARTED);
+            }
+            else {
+                _lastErrorCode = ERROR_CODE.AUDIOINPUT_NOT_AVAILABLE;
+                throw "error: Nor getUserMedia or cordova-plugin-audioinput are available!";
+            }
         }
         else {
             _lastErrorCode = ERROR_CODE.CAPTURE_ALREADY_STARTED;
@@ -186,6 +208,7 @@ window.speechcapture = (function () {
      * Stops capturing.
      */
     var stop = function () {
+
         if (window.audioinput && audioinput.isCapturing()) {
             window.audioinput.stop();
         }
@@ -194,8 +217,12 @@ window.speechcapture = (function () {
             _handleAudioBufferCreation(_currentSpeechHistory);
         }
 
+        _captureStopped();
         _resetAll();
-        _callSpeechStatusCB(STATUS.CAPTURE_STOPPED);
+
+        _getUserMediaMode = false;
+        _getUserMedia = null;
+        _mediaStream = null;
     };
 
 
@@ -205,12 +232,7 @@ window.speechcapture = (function () {
      * @returns {boolean}
      */
     var isCapturing = function () {
-        if (window.audioinput) {
-            return audioinput.isCapturing();
-        }
-        else {
-            return false;
-        }
+        return _captureRunning();
     };
 
 
@@ -241,7 +263,6 @@ window.speechcapture = (function () {
      */
     var getCurrentVolume = function () {
         if (_lastAudioLevel) {
-            //decibel = Math.max(-75, Math.min(decibel, 0)); // Should be between -75 and zero
             return parseFloat(_lastAudioLevel).toFixed(0);
         }
         else {
@@ -263,39 +284,46 @@ window.speechcapture = (function () {
         }
 
         return {
-            currentLevel: parseFloat(_lastAudioLevel).toFixed(0),
-            ambientAverageLevel: parseFloat(_ambientAverageLevel).toFixed(0),
-            currentThreshold: parseFloat(_currentThreshold).toFixed(0),
-            currentSpeechChunks: _currentSpeechLength,
-            currentSpeechBufferSize: _currentSpeechHistory.length,
-            noSpeechLength: _noSpeechPeriod,
-            constraints: {
-                allowedDelayChunks: _speechAllowedDelayChunks,
-                minimumLengthChunks: _speechMinimumLengthChunks,
-                maximumLengthChunks: _speechMaximumLengthChunks
+            RealTime: {
+                AmbientAverageLevel: parseFloat(_ambientAverageLevel).toFixed(0),
+                CurrentLevel: parseFloat(_lastAudioLevel).toFixed(0),
+                CurrentThreshold: parseFloat(_currentThreshold).toFixed(0),
+                CurrentSpeechChunks: _currentSpeechLength,
+                CurrentSpeechBufferSize: _currentSpeechHistory.length,
+                CurrentSpeechLength: _noSpeechPeriod,
+                TotalNumOfSpeechChunks: _totalNumOfSpeechChunks,
+                InputQueueLength: _audioDataQueue.length,
+                InputDataTotal: _audioInputDataTotal
             },
-            internals: {
+            Events: {
+                NumOfStart: _noOfEventsStart,
+                NumOfContinue: _noOfEventsContinue,
+                NumOfStop: _noOfEventsStop,
+                NumOfMin: _noOfEventsMin,
+                NumOfMax: _noOfEventsMax
+            },
+            GetUserMedia: {
+                Active: _getUserMediaMode,
+                CapturingStatus: _getUserMediaRunning
+            },
+            AudioInput: {
+                Active: audioInputDataCapturing,
+                Events: _audioInputEvents
+            },
+            Cfg: _cfg,
+            Internals: {
+                AnalysisBufferSize: _analysisBufferSize,
+                AnalysisIterations: _analyzeIterations,
                 AnalysisBuffersPerIteration: _noOfAnalysisBuffersPerIteration,
-                getNextBufferIterations: _getNextBufferIterations,
-                audioInputFrequency: _audioInputFrequency,
-                inputBufferLenInS: parseFloat(_bufferLengthInSeconds).toFixed(3),
-                analysisBufferLengthInS: parseFloat(_analysisBufferLengthInS).toFixed(3),
-                analysisBufferSize: _analysisBufferSize,
-                noOfSpeechChunks: _noOfSpeechChunks
-            },
-            events: {
-                noOfEventsStart: _noOfEventsStart,
-                noOfEventsContinue: _noOfEventsContinue,
-                noOfEventsStop: _noOfEventsStop,
-                noOfEventsMin: _noOfEventsMin,
-                noOfEventsMax: _noOfEventsMax
-            },
-            audioinput: {
-                isCapturing: audioInputDataCapturing,
-                audioInputEvents: _audioInputEvents,
-                InputQueueLength: _audioDataQueue.length
+                AnalysisBufferLengthInS: parseFloat(_analysisBufferLengthInS).toFixed(3),
+                AudioInputFrequency: _audioInputFrequency,
+                InputBufferLenInS: parseFloat(_bufferLengthInSeconds).toFixed(3),
+                MinLengthChunks: _speechMinimumLengthChunks,
+                MaxLengthChunks: _speechMaximumLengthChunks,
+                AllowedDelayChunks: _speechAllowedDelayChunks,
+                GetNextBufferIterations: _getNextBufferIterations
             }
-        }
+        };
     };
 
 
@@ -316,7 +344,7 @@ window.speechcapture = (function () {
             _audioInputEvents++;
 
             if (evt && evt.data) {
-                _audioDataQueue.push(evt.data);
+                _audioDataQueue.push(new Float32Array(evt.data));
             }
         }
         catch (ex) {
@@ -337,7 +365,7 @@ window.speechcapture = (function () {
      *
      * @returns {number}
      */
-    var getLastErrorCode = function() {
+    var getLastErrorCode = function () {
         return _lastErrorCode;
     };
 
@@ -356,12 +384,12 @@ window.speechcapture = (function () {
         _noOfEventsStop = 0,
         _noOfEventsMax = 0,
         _noOfEventsMin = 0,
-        _noOfSpeechChunks = 0,
+        _totalNumOfSpeechChunks = 0,
 
         _audioDataQueue = [],
         _currentSpeechHistory = [],
         _currentSpeechLength = 0,
-        _lastAudioLevel = -100,
+        _lastAudioLevel = -50,
         _currentThreshold = 0,
         _noSpeechPeriod = 0,
         _ambientTotal = 0,
@@ -387,8 +415,16 @@ window.speechcapture = (function () {
         _lastErrorCode = ERROR_CODE.NO_ERROR,
 
         _cfg = {},
-        _captureCfg = {};
+        _captureCfg = {},
 
+        _streamSourceProcessor = null,
+        _mediaStream = null,
+        _getUserMediaMode = false,
+        _getUserMediaSupported = false,
+        _getUserMediaRunning = false,
+        _getUserMedia = null,
+
+        _audioInputDataTotal = 0;
 
     /**
      *
@@ -426,6 +462,8 @@ window.speechcapture = (function () {
             _speechAllowedDelayChunks = Math.round(_cfg.speechDetectionAllowedDelay / analysisChunkLength);
             _speechMinimumLengthChunks = Math.round(_cfg.speechDetectionMinimum / analysisChunkLength);
             _speechMaximumLengthChunks = Math.round(_cfg.speechDetectionMaximum / analysisChunkLength);
+
+            _getNextBufferDuration = analysisChunkLength;
         }
         catch (ex) {
             _callErrorCB("_calculateAnalysisBuffers exception: " + ex);
@@ -457,7 +495,7 @@ window.speechcapture = (function () {
             _cfg.errorCB(errorObj);
         }
 
-        showConsoleError(message);
+        showConsoleError(errorObj.message);
         showAlert(errorObj.message);
     };
 
@@ -469,12 +507,13 @@ window.speechcapture = (function () {
      */
     var _callSpeechCapturedCB = function (speechData) {
         if (_cfg.speechCapturedCB) {
-            _cfg.speechCapturedCB(speechData);
+            _cfg.speechCapturedCB(speechData, _cfg.audioResultType);
         }
         else {
             _callErrorCB("_callSpeechCapturedCB: No callback defined!");
         }
     };
+
 
     /**
      *
@@ -500,7 +539,7 @@ window.speechcapture = (function () {
             _getNextBufferIterations++;
 
             // Are we still capturing?
-            if (window.audioinput && audioinput.isCapturing()) {
+            if (_captureRunning()) {
 
                 var audioInputData = _consumeFromAudioInputQueue();
 
@@ -533,14 +572,18 @@ window.speechcapture = (function () {
      */
     var _consumeFromAudioInputQueue = function () {
 
-        var audioInputData = [];
+        var audioInputData = new Float32Array(0),
+            chunk = null;
 
         if (_audioDataQueue.length > 0) {
             for (var i = 0; i < _cfg.concatenateMaxChunks; i++) {
                 if (_audioDataQueue.length === 0) {
                     break;
                 }
-                audioInputData = audioInputData.concat(_audioDataQueue.shift());
+
+                chunk = _audioDataQueue.shift();
+                audioInputData = audioInputData.concat(chunk);
+                _audioInputDataTotal += chunk.length;
             }
         }
 
@@ -555,20 +598,11 @@ window.speechcapture = (function () {
      */
     var _iteratedAndMonitorInputBuffer = function (audioInputBuffer) {
         try {
-            //var bytesLeft = audioInputBuffer.length;
-
             for (var i = 0; i < _noOfAnalysisBuffersPerIteration; i++) {
                 var startIdx = i * _analysisBufferSize,
                     endIdx = startIdx + _analysisBufferSize;
-                    //intervalLen = endIdx - startIdx;
 
-                //bytesLeft =- intervalLen;
-
-                /*if(_analysisBufferSize >= bytesLeft) {
-                    endIdx = audioInputBuffer.length;
-                }*/
-
-                if(endIdx > audioInputBuffer.length) {
+                if (endIdx > audioInputBuffer.length) {
                     endIdx = audioInputBuffer.length;
                 }
 
@@ -591,6 +625,7 @@ window.speechcapture = (function () {
      */
     var _monitor = function (audioBuffer) {
         try {
+
             // First: Has maximum length threshold occurred or continue?
             if (_currentSpeechLength + 1 > _speechMaximumLengthChunks) {
                 _maximumLengthSpeechEvent(_currentSpeechHistory);
@@ -599,7 +634,6 @@ window.speechcapture = (function () {
 
             // Is somebody speaking?
             if (_identifySpeech(audioBuffer)) {
-
                 // Speech Started or continued?
                 if (!_speakingRightNow) {
                     _startSpeechEvent(audioBuffer);
@@ -625,7 +659,7 @@ window.speechcapture = (function () {
                 }
 
                 // Handle silence
-                _calculateAmbientAverageLevel();
+                _calculateAmbientAverageLevel(_lastAudioLevel);
             }
 
             return true;
@@ -647,14 +681,18 @@ window.speechcapture = (function () {
      */
     var _identifySpeech = function (audioBuffer) {
         try {
+
             if (audioBuffer && audioBuffer.length > 0) {
                 _analyzeIterations++;
 
-                _lastAudioLevel = _getAudioLevels(audioBuffer);
+                var currentLevel = _getAudioLevels(audioBuffer);
 
-                if (_lastAudioLevel) {
+                if (currentLevel !== -Infinity) {
+
+                    _lastAudioLevel = currentLevel;
+
                     if (_lastAudioLevel > _currentThreshold) {
-                        _noOfSpeechChunks++;
+                        _totalNumOfSpeechChunks++;
                         return true;
                     }
                 }
@@ -673,13 +711,12 @@ window.speechcapture = (function () {
      *
      * @private
      */
-    var _calculateAmbientAverageLevel = function () {
-        if (_lastAudioLevel) {
-            _silentIterations++;
-            _ambientTotal = _ambientTotal + _lastAudioLevel;
-            _ambientAverageLevel = _ambientTotal / _silentIterations;
-            _currentThreshold = _ambientAverageLevel + _cfg.speechDetectionThreshold;
-        }
+    var _calculateAmbientAverageLevel = function (audioLevel) {
+        _silentIterations++;
+        _ambientTotal = _ambientTotal + audioLevel;
+        _ambientAverageLevel = _ambientTotal / _silentIterations;
+        _currentThreshold = _ambientAverageLevel + _cfg.speechDetectionThreshold;
+        _currentThreshold = _currentThreshold > 0 ? 0 : _currentThreshold;
     };
 
 
@@ -692,6 +729,7 @@ window.speechcapture = (function () {
      */
     var _getAudioLevels = function (audioBuffer) {
         try {
+
             var total = 0,
                 length = audioBuffer.length,
                 decibel,
@@ -705,6 +743,7 @@ window.speechcapture = (function () {
 
             rms = Math.sqrt(total / length);
             decibel = _getDecibelFromAmplitude(rms);
+
 
             return decibel;
         }
@@ -745,13 +784,15 @@ window.speechcapture = (function () {
         _noOfEventsStop = 0;
         _noOfEventsMax = 0;
         _noOfEventsMin = 0;
-        _noOfSpeechChunks = 0;
+        _totalNumOfSpeechChunks = 0;
 
         _audioInputEvents = 0;
         _analyzeIterations = 0;
         _getNextBufferIterations = 0;
-        _lastAudioLevel = -100;
+        _lastAudioLevel = -50;
         _currentThreshold = 0;
+
+        _audioInputDataTotal = 0;
     };
 
 
@@ -780,7 +821,7 @@ window.speechcapture = (function () {
      * @private
      */
     var _resetSpeechDetection = function () {
-        _currentSpeechHistory = [];
+        _currentSpeechHistory = new Float32Array(0);
         _currentSpeechLength = 0;
         _noSpeechPeriod = 0;
     };
@@ -828,7 +869,7 @@ window.speechcapture = (function () {
     var _continueSpeechEvent = function (speechData, silent) {
         _noOfEventsContinue++;
         _appendSpeechToHistory(speechData);
-        if(!silent) {
+        if (!silent) {
             _noSpeechPeriod = 0;
         }
     };
@@ -865,7 +906,9 @@ window.speechcapture = (function () {
      * @private
      */
     var _appendSpeechToHistory = function (speechData) {
-        _currentSpeechHistory = _currentSpeechHistory.concat(speechData);
+        if (!_cfg.detectOnly) {
+            _currentSpeechHistory = _currentSpeechHistory.concat(speechData);
+        }
         _currentSpeechLength++;
     };
 
@@ -876,8 +919,9 @@ window.speechcapture = (function () {
      * @private
      */
     var _handleAudioBufferCreation = function (speechData) {
+
         // Was the speech long enough to create an audio buffer?
-        if (speechData && speechData.length > 0 && _currentSpeechLength > _speechMinimumLengthChunks) {
+        if (_currentSpeechLength > _speechMinimumLengthChunks) { // speechData && speechData.length > 0 &&
             var audioResult = null,
                 preEncodingBuffer = speechData.slice(0);
 
@@ -888,15 +932,16 @@ window.speechcapture = (function () {
                 case AUDIO_RESULT_TYPE.RAW_DATA:
                     audioResult = preEncodingBuffer;
                     break;
+                case AUDIO_RESULT_TYPE.DETECTION_ONLY:
+                    audioResult = null;
+                    break;
                 default:
                 case AUDIO_RESULT_TYPE.WAV_BLOB:
                     audioResult = _createWAVAudioBuffer(preEncodingBuffer);
                     break;
             }
 
-            if (audioResult) {
-                _callSpeechCapturedCB(audioResult);
-            }
+            _callSpeechCapturedCB(audioResult);
         }
         else {
             _noOfEventsMin++;
@@ -911,9 +956,11 @@ window.speechcapture = (function () {
      */
     var _createWAVAudioBuffer = function (audioDataBuffer) {
         try {
-            var encoder = new WavAudioEncoder(_captureCfg.sampleRate, _captureCfg.channels);
-            encoder.encode([audioDataBuffer]);
-            return encoder.finish("audio/wav");
+            var wavData = wavEncoder.encode(audioDataBuffer, _cfg.sampleRate, _cfg.channels);
+
+            return new Blob([wavData], {
+                type: 'audio/wav'
+            });
         }
         catch (e) {
             _callErrorCB("_createWAVAudioBuffer exception: " + e);
@@ -964,22 +1011,141 @@ window.speechcapture = (function () {
      * Creates the Web Audio Context if needed
      * @private
      */
-    var _initWebAudio = function (audioCtxFromCfg) {
+    var _initWebAudio = function (audioCtxFromCfg, preferGUM) {
         try {
             _webAudioAPISupported = false;
+
+            window.AudioContext = window.AudioContext || window.webkitAudioContext;
 
             if (audioCtxFromCfg) {
                 _audioContext = audioCtxFromCfg;
             }
             else if (!_audioContext) {
-                window.AudioContext = window.AudioContext || window.webkitAudioContext;
                 _audioContext = new window.AudioContext();
                 _webAudioAPISupported = true;
+            }
+
+            if (AudioContext.prototype.hasOwnProperty('createMediaStreamSource') && _cfg.getUserMediaActive) {
+                _getUserMedia = (navigator.getUserMedia || navigator.webkitGetUserMedia ||
+                navigator.mozGetUserMedia || navigator.msGetUserMedia).bind(navigator);
+
+                if (_getUserMedia) {
+                    _getUserMediaSupported = true;
+
+                    if (preferGUM || !window.audioinput) {
+                        _getUserMediaMode = true;
+                        _cfg.sampleRate = _audioContext.sampleRate;
+                    }
+                }
             }
 
             return true;
         }
         catch (e) {
+            return false;
+        }
+    };
+
+    /**
+     *
+     * @returns {boolean}
+     */
+    var _startMediaStreamSource = function () {
+        if (_getUserMedia && _getUserMediaMode) {
+            try {
+                _getUserMedia({
+                    video: false,
+                    audio: true
+                }, function (stream) {
+                    try {
+                        _mediaStream = _audioContext.createMediaStreamSource(stream);
+
+                        _streamSourceProcessor = _audioContext.createScriptProcessor(_cfg.bufferSize, 1, 1);
+
+                        _streamSourceProcessor.onaudioprocess = function (audioProcessingEvent) {
+                            if (_getUserMediaRunning) {
+                                try {
+                                    _audioInputEvents++;
+
+                                    //var cpy = new Float32Array();
+
+                                    _audioDataQueue.push(audioProcessingEvent.inputBuffer.getChannelData(0)); // Array.prototype.slice.call(cpy)
+                                }
+                                catch (e) {
+                                    _captureStopped();
+                                    _callErrorCB("_startMediaStreamSource.onaudioprocess exception: " + e);
+                                }
+                            }
+                        };
+
+                        _mediaStream.connect(_streamSourceProcessor);
+                        _streamSourceProcessor.connect(_audioContext.destination);
+
+                        _captureStarted();
+                        _getNextBuffer();
+                    }
+                    catch (e) {
+                        _callErrorCB("_startMediaStreamSource getUserMedia exception: " + e);
+                        _captureStopped();
+                    }
+                }, function (error) {
+                    _callErrorCB("_startMediaStreamSource - Failed to get MediaStream: " + error);
+                    _captureStopped();
+                });
+            }
+            catch (e) {
+                _callErrorCB("_startMediaStreamSource exception: " + e);
+                _captureStopped();
+            }
+        }
+        else {
+            throw("error: GetUserMedia is not supported!");
+        }
+    };
+
+
+    /**
+     *
+     * @private
+     */
+    var _captureStopped = function () {
+        if (_getUserMediaMode) {
+            _getUserMediaRunning = false;
+            if (_streamSourceProcessor) {
+                _streamSourceProcessor.onaudioprocess = null;
+            }
+            _streamSourceProcessor = null;
+            _callSpeechStatusCB(STATUS.CAPTURE_STOPPED);
+        }
+    };
+
+
+    /**
+     *
+     * @private
+     */
+    var _captureStarted = function () {
+        if (_getUserMediaMode) {
+            _getUserMediaRunning = true;
+        }
+
+        _callSpeechStatusCB(STATUS.CAPTURE_STARTED);
+    };
+
+
+    /**
+     *
+     * @returns {*}
+     * @private
+     */
+    var _captureRunning = function () {
+        if (_getUserMediaMode) {
+            return _getUserMediaRunning;
+        }
+        else if (window.audioinput) {
+            return audioinput.isCapturing();
+        }
+        else {
             return false;
         }
     };
@@ -990,7 +1156,7 @@ window.speechcapture = (function () {
      * @param message
      */
     var showAlert = function (message) {
-        if (_cfg.debugAlerts) {
+        if (_cfg.debugAlerts && message) {
             alert(message);
         }
     };
@@ -1001,13 +1167,13 @@ window.speechcapture = (function () {
      * @param message
      */
     var showConsoleError = function (message) {
-        if (_cfg.debugConsole) {
-            console.error(message);
+        if (_cfg.debugConsole && message) {
+            console.log(message);
         }
     };
 
 
-    // Public interface
+// Public interface
     return {
         STATUS: STATUS,
         AUDIO_RESULT_TYPE: AUDIO_RESULT_TYPE,
@@ -1027,69 +1193,128 @@ window.speechcapture = (function () {
         onAudioInputError: onAudioInputError
     };
 
-})();
+})
+();
 
 
 /**
- * From: https://github.com/higuma/wav-audio-encoder-js
+ *
+ * @returns {Float32Array}
  */
-(function(self) {
-    var min = Math.min,
-        max = Math.max;
+Float32Array.prototype.concat = function () {
+    var bytesPerIndex = 4,
+        buffers = Array.prototype.slice.call(arguments);
 
-    var setString = function(view, offset, str) {
-        var len = str.length;
-        for (var i = 0; i < len; ++i)
-            view.setUint8(offset + i, str.charCodeAt(i));
-    };
+    // add self
+    buffers.unshift(this);
 
-    var Encoder = function(sampleRate, numChannels) {
-        this.sampleRate = sampleRate;
-        this.numChannels = numChannels;
-        this.numSamples = 0;
-        this.dataViews = [];
-    };
-
-    Encoder.prototype.encode = function(buffer) {
-        var len = buffer[0].length,
-            nCh = this.numChannels,
-            view = new DataView(new ArrayBuffer(len * nCh * 2)),
-            offset = 0;
-        for (var i = 0; i < len; ++i)
-            for (var ch = 0; ch < nCh; ++ch) {
-                var x = buffer[ch][i] * 0x7fff;
-                view.setInt16(offset, x < 0 ? max(x, -0x8000) : min(x, 0x7fff), true);
-                offset += 2;
+    buffers = buffers.map(function (item) {
+        if (item instanceof Float32Array) {
+            return item.buffer;
+        }
+        else if (item instanceof ArrayBuffer) {
+            if (item.byteLength / bytesPerIndex % 1 !== 0) {
+                throw new Error('One of the ArrayBuffers is not from a Float32Array');
             }
-        this.dataViews.push(view);
-        this.numSamples += len;
+            return item;
+        }
+        else {
+            throw new Error('You can only concat Float32Array, or ArrayBuffers');
+        }
+    });
+
+    var concatenatedByteLength = buffers
+        .map(function (a) {
+            return a.byteLength;
+        })
+        .reduce(function (a, b) {
+            return a + b;
+        }, 0);
+
+    var concatenatedArray = new Float32Array(concatenatedByteLength / bytesPerIndex);
+
+    var offset = 0;
+    buffers.forEach(function (buffer, index) {
+        concatenatedArray.set(new Float32Array(buffer), offset);
+        offset += buffer.byteLength / bytesPerIndex;
+    });
+
+    return concatenatedArray;
+};
+
+
+/**
+ *
+ * @type {{encode}}
+ */
+var wavEncoder = (function () {
+
+    /**
+     *
+     * @param samples - The sample array
+     * @param sampleRate - The sampe rate
+     * @param channels - The number of channels
+     * @returns {DataView}
+     */
+    var encode = function (samples, sampleRate, channels) {
+
+        var numFrames = samples.length,
+            numChannels = channels || 1,
+            bytesPerSample = 2,
+            bitsPerSample = bytesPerSample * 8,
+            blockAlign = numChannels * bytesPerSample,
+            byteRate = sampleRate * blockAlign,
+            dataSize = numFrames * blockAlign;
+
+        var buffer = new ArrayBuffer(44 + dataSize),
+            view = new DataView(buffer);
+
+        writeString(view, 0, 'RIFF'); // ChunkID
+        view.setUint32(4, 32 + dataSize, true); // Chunk Size
+        writeString(view, 8, 'WAVE'); // Format
+        writeString(view, 12, 'fmt '); // Subchunk1ID
+        view.setUint32(16, 16, true); // Subchunk1Size
+        view.setUint16(20, 1, true); // Audio Format
+        view.setUint16(22, numChannels, true); // Number of channels
+        view.setUint32(24, sampleRate, true); // Sample Rate
+        view.setUint32(28, byteRate, true); // Byte Rate
+        view.setUint16(32, blockAlign, true); // Block Align
+        view.setUint16(34, bitsPerSample, true); // Bits Per Sample
+        writeString(view, 36, 'data'); // Subchunk2ID
+        view.setUint32(40, dataSize, true); // Subchunk2Size
+
+        floatTo16BitPCM(view, 44, samples);
+
+        return view;
     };
 
-    Encoder.prototype.finish = function(mimeType) {
-        var dataSize = this.numChannels * this.numSamples * 2,
-            view = new DataView(new ArrayBuffer(44));
-        setString(view, 0, 'RIFF');
-        view.setUint32(4, 36 + dataSize, true);
-        setString(view, 8, 'WAVE');
-        setString(view, 12, 'fmt ');
-        view.setUint32(16, 16, true);
-        view.setUint16(20, 1, true);
-        view.setUint16(22, this.numChannels, true);
-        view.setUint32(24, this.sampleRate, true);
-        view.setUint32(28, this.sampleRate * 4, true);
-        view.setUint16(32, this.numChannels * 2, true);
-        view.setUint16(34, 16, true);
-        setString(view, 36, 'data');
-        view.setUint32(40, dataSize, true);
-        this.dataViews.unshift(view);
-        var blob = new Blob(this.dataViews, { type: 'audio/wav' });
-        this.cleanup();
-        return blob;
+    /**
+     *
+     * @param view
+     * @param offset
+     * @param string
+     */
+    var writeString = function (view, offset, string) {
+        for (var i = 0; i < string.length; i++) {
+            view.setUint8(offset + i, string.charCodeAt(i));
+        }
     };
 
-    Encoder.prototype.cancel = Encoder.prototype.cleanup = function() {
-        delete this.dataViews;
+    /**
+     *
+     * @param output
+     * @param offset
+     * @param input
+     */
+    var floatTo16BitPCM = function (output, offset, input) {
+        for (var i = 0; i < input.length; i++, offset += 2) {
+            var s = Math.max(-1, Math.min(1, input[i]));
+            output.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+        }
     };
 
-    self.WavAudioEncoder = Encoder;
-})(self);
+    // Public interface
+    return {
+        encode: encode
+    };
+})();

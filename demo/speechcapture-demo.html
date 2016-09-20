@@ -37,8 +37,18 @@
                     <input id="bufferSize" class="w3-input" type="number" value="16384" size="5"/>
                     <label for="analysisChunkLength">Chunk Length (ms)</label>
                     <input id="analysisChunkLength" class="w3-input" type="number" value="100" size="5"/>
+                    <label for="detectOnly">Detection Only</label>
+                    <select id="detectOnly" class="w3-input">
+                        <option value="0">No</option>
+                        <option value="1">Yes</option>
+                    </select>
                     <label for="compressPauses">Compress Pauses</label>
                     <select id="compressPauses" class="w3-input">
+                        <option value="0">No</option>
+                        <option value="1">Yes</option>
+                    </select>
+                    <label for="preferGUM">Prefer GetUserMedia</label>
+                    <select id="preferGUM" class="w3-input">
                         <option value="0">No</option>
                         <option value="1">Yes</option>
                     </select>
@@ -58,7 +68,7 @@
                         <option value="3">RAW DATA</option>
                     </select>
                     <input id="startCapture" type="button" class="w3-btn w3-green margin-5" value="Start">
-                    <input id="stopCapture" type="button" class="w3-btn w3-red margin-5" value="Stop & Create" disabled>
+                    <input id="stopCapture" type="button" class="w3-btn w3-red margin-5" value="Stop" disabled>
                     <div id="recording-list" class="w3-section w3-border-green w3-border margin-5 w3-small"
                          style="word-break: break-all;">...Captured speech will show up here...
                     </div>
@@ -67,8 +77,6 @@
                      style="word-break: break-all;">...Debug info will show up here...
                 </div>
             </div>
-            <i class="w3-small"><a href="https://github.com/higuma/wav-audio-encoder-js" target="_blank">WavAudioEncoder.js</a>
-                is incorporated for the WAV encoding.</i><br>
             <a class="w3-btn margin-5" href="index.html">Back</a>
         </div>
         <div class="w3-container w3-quarter"></div>
@@ -80,6 +88,6 @@
 </body>
 
 <script type="text/javascript" src="utils.js"></script>
-<script type="text/javascript" src="cordova.js"></script>
+<script type="text/javascript" src="../cordova.js"></script>
 <script type="text/javascript" src="../src/speechcapture.js"></script>
 <script type="text/javascript" src="speechcapture-demo.js"></script>

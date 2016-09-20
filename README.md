@@ -1,7 +1,12 @@
 # Speech Capture
-Speech detection/capture library used to detect and capture speech from an incoming audio stream of data.
+Speech detection/capture library used to detect and capture speech from an incoming audio stream of data, typically from the microphone.
 
-Currently this library only supports the __Apache Cordova__ plugin __[cordova-plugin-audioinput](https://github.com/edimuj/cordova-plugin-audioinput)__ as audio input from the microphone.
+Currently this library supports two types of audio input:
+* __[getUserMedia](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/getUserMedia)__
+* __Apache Cordova__ plugin __[cordova-plugin-audioinput](https://github.com/edimuj/cordova-plugin-audioinput)__
+
+This means that you can use the library in traditional web browsers that __[supports getUserMedia](http://caniuse.com/#feat=stream)__, and in Apache Cordova hybrid apps together with the __[cordova-plugin-audioinput](https://github.com/edimuj/cordova-plugin-audioinput)__ plugin.
+
 
 ## Installation
 
@@ -10,6 +15,7 @@ Include any of the following sources in your project:
 
 - [speechcapture.js](https://raw.githubusercontent.com/edimuj/speechcapture/master/src/speechcapture.js)
 - [speechcapture.min.js](https://raw.githubusercontent.com/edimuj/speechcapture/master/dist/speechcapture.min.js)
+
 
 ## API
 
@@ -24,8 +30,28 @@ speechcapture.start(cfg, speechCapturedCB, errorCB, speechStatusCB);
 Implement a callback for handling the captured speech.
 
 ```javascript
-function speechCapturedCB( audioData ) {
-  // Do something with the captured audio data.
+function speechCapturedCB( audioData, type ) {
+	switch (type) {
+		case speechcapture.AUDIO_RESULT_TYPE.WEBAUDIO_AUDIOBUFFER:
+			// Do something with the captured Web Audio buffer ...
+			break;
+
+		case speechcapture.AUDIO_RESULT_TYPE.RAW_DATA:
+			// Do something with the captured Float32Array ...
+			break;
+
+		case speechcapture.AUDIO_RESULT_TYPE.WAV_BLOB:
+			// Do something with the captured WAV audio Blob ...
+			break;
+
+		case speechcapture.AUDIO_RESULT_TYPE.DETECTION_ONLY:
+			// Do something based on the successful capture event, which in this case does not contain any audio data.
+			break;
+
+		default:
+			// Unknown audio result
+			break;
+	}
 }
 ```
 
@@ -72,7 +98,7 @@ function speechStatusCB( code ) {
             console.log("Speech Stopped!");
             break;
         default:
-            console.log("Unknown status occurred: code=" + code);
+            console.log("Unknown status occurred: " + code);
             break;
     }
 }
@@ -82,7 +108,7 @@ function speechStatusCB( code ) {
 
 ```javascript
 cfg = {
-  // The sample rate to use for capturing audio. No supported on all platforms.
+  // The sample rate to use for capturing audio. Not supported on all platforms.
   sampleRate: 22050, // Hz
   
   // Threshold for capturing speech.
@@ -105,13 +131,19 @@ cfg = {
   // Removes long pauses from the captured output.
   compressPauses: false,
   
+  // Do not capture any data, just speech detection events. The result audio result type is automatically set to speechcapture.AUDIO_RESULT_TYPE.DETECTION_ONLY.
+  detectOnly: false
+  
   // Specifies the type of result produce when speech is captured.
   // For convenience, use the speechcapture.AUDIO_RESULT_TYPE constants to set this parameter:
   // -WAV_BLOB - WAV encoded Audio blobs
   // -WEBAUDIO_AUDIOBUFFER - Web Audio API AudioBuffers
-  // -RAW_DATA - Raw float audio data in arrays
+  // -RAW_DATA - Float32Arrays with the raw audio data
   audioResultType: speechcapture.AUDIO_RESULT_TYPE.WAV_BLOB
   audioContext: null
+  
+  // Prefer audio input using getUserMedia and use cordova-plugin-audioinput only as a fallback. Only useful if both are supported by the current platform.
+  preferGUM: false,
   
   // Use window.alert and/or window.console to show errors
   debugAlerts: false, 
@@ -171,8 +203,10 @@ If the `audioResultType` is specified as `speechcapture.AUDIO_RESULT_TYPE.WEBAUD
 var audioCtx = speechcapture.getAudioContext();
 ```
 
+
 ## Example(s)
-An example of how to use the plugin can be found in the __demo__ folder. The demo __must run__ as an __Apache Cordova__ app in order to work.
+An example of how to use the speechcapture library can be found in the __demo__ folder.
+
 
 ## Contributing
 This project is open-source, so contributions are welcome. Just ensure that your changes doesn't break backward compatibility!
@@ -183,8 +217,14 @@ This project is open-source, so contributions are welcome. Just ensure that your
 4. Push to the branch (git push origin my-new-feature).
 5. Create a new Pull Request.
 
+
 ## Todo list
 [Enhancements](https://github.com/edimuj/speechcapture/labels/enhancement)
+
+
+## Bugs & Questions
+[Register a new issue](https://github.com/edimuj/speechcapture/issues/new)
+
 
 ## License
 MIT
