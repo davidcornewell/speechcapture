@@ -115,20 +115,20 @@ cfg = {
   
   // Threshold for capturing speech.
   // The audio level must rise to at least the threshold for speech capturing to start.
-  speechDetectionThreshold: 15  // dB
+  speechDetectionThreshold: 15,  // dB
   
   // The minimum length of speech to capture.
-  speechDetectionMinimum: 500 // mS
+  speechDetectionMinimum: 500, // mS
   
   // The maximum length of the captured speech.
-  speechDetectionMaximum: 10000 // mS
+  speechDetectionMaximum: 10000, // mS
   
   // The maximum allowed delay, before speech is considered to have ended.
-  speechDetectionAllowedDelay: 400 // mS
+  speechDetectionAllowedDelay: 400, // mS
   
   // The length of the audio chunks that are analyzed.
   // Shorter gives better results, while longer gives better performance.
-  analysisChunkLength: 100 // mS
+  analysisChunkLength: 100, // mS
   
   // Removes long pauses from the captured output.
   compressPauses: false,
@@ -143,7 +143,7 @@ cfg = {
   // -WEBAUDIO_AUDIOBUFFER (2) - Web Audio API AudioBuffers
   // -RAW_DATA (3) - Float32Arrays with the raw audio data
   // -DETECTION_ONLY (4) - Used automatically when detectOnly is true
-  audioResultType: speechcapture.AUDIO_RESULT_TYPE.WAV_BLOB
+  audioResultType: speechcapture.AUDIO_RESULT_TYPE.WAV_BLOB,
   audioContext: null,
   
   // Only applicable if cordova-plugin-audioinput is used as the audio source.
