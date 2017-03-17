@@ -32,7 +32,7 @@
                     <label for="maxSpeechLength">Max Speech Length (ms)</label>
                     <input id="maxSpeechLength" class="w3-input" type="number" value="10000" size="5"/>
                     <label for="sampleRate">sampleRate (Hz)</label>
-                    <input id="sampleRate" class="w3-input" type="number" value="22050" size="5"/>
+                    <input id="sampleRate" class="w3-input" type="number" value="16000" size="5"/>
                     <label for="bufferSize">BufferSize (bytes)</label>
                     <input id="bufferSize" class="w3-input" type="number" value="16384" size="5"/>
                     <label for="analysisChunkLength">Chunk Length (ms)</label>
@@ -52,7 +52,7 @@
                         <option value="0">No</option>
                         <option value="1">Yes</option>
                     </select>
-                    <label for="audioSource">Audio Source</label>
+                    <label for="audioSource">Audio Source (Cordova only)</label>
                     <select id="audioSource" class="w3-input">
                         <option value="0">DEFAULT (Android/iOS)</option>
                         <option value="5">CAMCORDER (Android/iOS)</option>
@@ -61,7 +61,7 @@
                         <option value="1">MIC (Android)</option>
                         <option value="6">VOICE_RECOGNITION (Android)</option>
                     </select>
-                    <label for="audioResultType">Audio Source</label>
+                    <label for="audioResultType">Result Type</label>
                     <select id="audioResultType" class="w3-input">
                         <option value="1">WAV BLOB</option>
                         <option value="2">WEBAUDIO AUDIOBUFFER</option>

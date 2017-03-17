@@ -5,9 +5,15 @@
  * Author: Edin Mujkanovic
  * Created: 2016-09-09
  *
+ * v1.2 - 2017-03-17
+ * -Added support for resampling the captured speech output (requires Web Audio support).
+ * -Added more comments.
+ * -Some code cleanup.
+ * -Fixed a bug where default speechDetectionMinimum/Maximum lengths where swapped (thanks @albaspazio).
+ *
  * Description:
  * Speech detection library used to detect and capture speech from an incoming audio stream of data.
- * Currently only supports cordova-plugin-audioinput as audio input, but I plan to also support MediaStreamSource in the future.
+ * Currently supports microphone input either via cordova-plugin-audioinput or MediaStreamSource/getUserMedia.
  *
  * License:
  * MIT
@@ -42,33 +48,42 @@ window.speechcapture = (function () {
             NO_WEB_AUDIO_SUPPORT: 3,
             CAPTURE_ALREADY_STARTED: 4,
             AUDIOINPUT_NOT_AVAILABLE: 5,
+            RESAMPLING_UNSUPPORTED: 6,
+            RESAMPLING_ERROR: 7,
             UNSPECIFIED: 999
         },
 
         DEFAULT = {
-            SAMPLERATE: 22050, //44100,
-            AUDIOSOURCE_TYPE: 7, //audioinput.AUDIOSOURCE_TYPE.VOICE_COMMUNICATION,
-            CHANNELS: 1, //audioinput.CHANNELS.MONO,
-            FORMAT: 'PCM_16BIT', //audioinput.FORMAT.PCM_16BIT,
+            SAMPLERATE: 16000,
 
-            BUFFER_SIZE: 16384,// ,
-            CONCATENATE_MAX_CHUNKS: 1,
+            // If you're using this library in conjunction with the cordova-plugin-audioinput (cordova-plugin-audioinput):
+            // These parameters are used to set up the Cordova plugin for audio capture on iOS and Android devices.
+            AUDIOSOURCE_TYPE: 7, // cordova-plugin-audioinput param -> audioinput.AUDIOSOURCE_TYPE.VOICE_COMMUNICATION
+            CHANNELS: 1, // cordova-plugin-audioinput param -> audioinput.CHANNELS.MONO
+            FORMAT: 'PCM_16BIT', // cordova-plugin-audioinput param -> audioinput.FORMAT.PCM_16BIT
+            BUFFER_SIZE: 16384, // cordova-plugin-audioinput param
+            CONCATENATE_MAX_CHUNKS: 1, // cordova-plugin-audioinput param
 
-            SPEECH_DETECTION_THRESHOLD: 15, // dB
-            SPEECH_DETECTION_ALLOWED_DELAY: 400, // mS
-            SPEECH_DETECTION_MAX_LENGTH: 500, // mS
-            SPEECH_DETECTION_MIN_LENGTH: 10000, // mS
-            SPEECH_DETECTION_COMPRESS_PAUSES: false,
-            SPEECH_DETECTION_ANALYSIS_CHUNK_LENGTH: 100, // mS
+            // Speech detection parameters
+            DETECT_ONLY: false, // true = only detect speech, but do not capture.
+            SPEECH_DETECTION_THRESHOLD: 15, // The number of decibels over the baseline that are considered as speech (dB).
+            SPEECH_DETECTION_ALLOWED_DELAY: 400, // The allowed delay before considering speech stopped (mS).
+            SPEECH_DETECTION_MIN_LENGTH: 500, // The minimum length of speech that triggers capture (mS).
+            SPEECH_DETECTION_MAX_LENGTH: 10000, // The maximum length of speech that triggers capture (mS).
+            SPEECH_DETECTION_COMPRESS_PAUSES: false, // true = remove all pauses within the captured speech.
+            SPEECH_DETECTION_ANALYSIS_CHUNK_LENGTH: 100, // The length (mS) of the chunks used to detect speech.
 
-            AUDIO_RESULT_TYPE: 1,
-            PREFER_GET_USER_MEDIA: false,
+            // Speech detection results
+            AUDIO_RESULT_TYPE: 1, // 1 = speechcapture.AUDIO_RESULT_TYPE.WAV_BLOB
 
-            DEBUG_ALERTS: false,
-            DEBUG_CONSOLE: false,
+            // HTML5 getUserMedia support
+            PREFER_GET_USER_MEDIA: true, // Should use getUserMedia for microphone input if supported on browser.
 
-            GETUSERMEDIA_ACTIVE: true,
-            DETECT_ONLY: false
+            GETUSERMEDIA_ACTIVE: true, // false = Deactivate the usage of getUserMedia entirely, even if it is the only input.
+            AUDIOINPUT_PLUGIN_ACTIVE: true, // false = Deactivate the usage of cordova-plugin-audioinput, even if it is the only input.
+
+            DEBUG_ALERTS: false, // true = Show debug alerts
+            DEBUG_CONSOLE: false // true = Show debug console output
         };
 
 
@@ -115,10 +130,11 @@ window.speechcapture = (function () {
 
             // cordova-audioinput-plugin parameters
             //
+            _cfg.audioinputPluginActive = cfg.audioInputPluginActive || DEFAULT.AUDIOINPUT_PLUGIN_ACTIVE;
             _cfg.sampleRate = cfg.sampleRate || DEFAULT.SAMPLERATE;
+            _cfg.inputSampleRate = cfg.inputSampleRate || cfg.sampleRate || DEFAULT.SAMPLERATE; // Can be changed later on depending on the input source.
             _cfg.bufferSize = cfg.bufferSize || DEFAULT.BUFFER_SIZE;
             _cfg.audioSourceType = cfg.audioSourceType || DEFAULT.AUDIOSOURCE_TYPE;
-
             _cfg.concatenateMaxChunks = DEFAULT.CONCATENATE_MAX_CHUNKS;
             _cfg.channels = DEFAULT.CHANNELS;
             _cfg.format = DEFAULT.FORMAT;
@@ -148,7 +164,8 @@ window.speechcapture = (function () {
                 _cfg.audioResultType = AUDIO_RESULT_TYPE.DETECTION_ONLY;
             }
 
-            if (_cfg.audioResultType === AUDIO_RESULT_TYPE.WEBAUDIO_AUDIOBUFFER || _cfg.preferGUM || !window.audioinput) {
+            //noinspection JSUnresolvedVariable
+            if (_cfg.audioResultType === AUDIO_RESULT_TYPE.WEBAUDIO_AUDIOBUFFER || _cfg.preferGUM || !_cfg.audioinputPluginActive || !window.audioinput) {
                 if (!_initWebAudio(_cfg.audioContext, _cfg.preferGUM)) {
                     if (_cfg.audioResultType === AUDIO_RESULT_TYPE.WEBAUDIO_AUDIOBUFFER) {
                         _lastErrorCode = ERROR_CODE.NO_WEB_AUDIO_SUPPORT;
@@ -157,13 +174,13 @@ window.speechcapture = (function () {
                 }
             }
 
-            _calculateTimePeriods(_cfg.sampleRate, _cfg.bufferSize);
+            _calculateTimePeriods(_cfg.inputSampleRate, _cfg.bufferSize);
             _resetAll();
 
             // Configuration for the cordova-audioinput-plugin
             //
             _captureCfg = {
-                sampleRate: _cfg.sampleRate,
+                sampleRate: _cfg.inputSampleRate,
                 bufferSize: _cfg.bufferSize,
                 channels: _cfg.channels,
                 format: _cfg.format,
@@ -173,28 +190,31 @@ window.speechcapture = (function () {
 
             if (_getUserMediaMode) {
                 _startMediaStreamSource();
-
-            }
-            else if (window.audioinput) {
-                // Subscribe to audioinput events
-                //
-                window.removeEventListener('audioinput', onAudioInputCapture, false);
-                window.addEventListener('audioinput', onAudioInputCapture, false);
-
-                window.removeEventListener('audioinputerror', onAudioInputError, false);
-                window.addEventListener('audioinputerror', onAudioInputError, false);
-
-                // Start the cordova-audioinput-plugin capture
-                //
-                audioinput.start(_captureCfg);
-
-                _getNextBuffer();
-
-                _callSpeechStatusCB(STATUS.CAPTURE_STARTED);
             }
             else {
-                _lastErrorCode = ERROR_CODE.AUDIOINPUT_NOT_AVAILABLE;
-                throw "error: Nor getUserMedia or cordova-plugin-audioinput are available!";
+                //noinspection JSUnresolvedVariable
+                if (_cfg.audioinputPluginActive && window.audioinput) {
+                    // Subscribe to audioinput events
+                    //
+                    window.removeEventListener('audioinput', onAudioInputCapture, false);
+                    window.addEventListener('audioinput', onAudioInputCapture, false);
+
+                    window.removeEventListener('audioinputerror', onAudioInputError, false);
+                    window.addEventListener('audioinputerror', onAudioInputError, false);
+
+                    // Start the cordova-audioinput-plugin capture
+                    //
+                    //noinspection JSUnresolvedVariable
+                    audioinput.start(_captureCfg);
+
+                    _getNextBuffer();
+
+                    _callSpeechStatusCB(STATUS.CAPTURE_STARTED);
+                }
+                else {
+                    _lastErrorCode = ERROR_CODE.AUDIOINPUT_NOT_AVAILABLE;
+                    throw "error: Nor getUserMedia or cordova-plugin-audioinput are available!";
+                }
             }
         }
         else {
@@ -209,8 +229,10 @@ window.speechcapture = (function () {
      */
     var stop = function () {
 
-        if (window.audioinput && audioinput.isCapturing()) {
-            window.audioinput.stop();
+        //noinspection JSUnresolvedVariable
+        if (_cfg.audioinputPluginActive && window.audioinput && audioinput.isCapturing()) {
+            //noinspection JSUnresolvedVariable
+            audioinput.stop();
         }
 
         if (_currentSpeechHistory.length > 0) {
@@ -279,7 +301,9 @@ window.speechcapture = (function () {
     var getMonitoringData = function () {
 
         var audioInputDataCapturing = false;
-        if (window.audioinput) {
+        //noinspection JSUnresolvedVariable
+        if (_cfg.audioinputPluginActive && window.audioinput) {
+            //noinspection JSUnresolvedVariable
             audioInputDataCapturing = audioinput.isCapturing();
         }
 
@@ -304,11 +328,13 @@ window.speechcapture = (function () {
             },
             GetUserMedia: {
                 Active: _getUserMediaMode,
-                CapturingStatus: _getUserMediaRunning
+                CapturingStatus: _getUserMediaRunning,
+                SampleRate: _cfg.inputSampleRate
             },
             AudioInput: {
                 Active: audioInputDataCapturing,
-                Events: _audioInputEvents
+                Events: _audioInputEvents,
+                SampleRate: _cfg.inputSampleRate
             },
             Cfg: _cfg,
             Internals: {
@@ -321,7 +347,8 @@ window.speechcapture = (function () {
                 MinLengthChunks: _speechMinimumLengthChunks,
                 MaxLengthChunks: _speechMaximumLengthChunks,
                 AllowedDelayChunks: _speechAllowedDelayChunks,
-                GetNextBufferIterations: _getNextBufferIterations
+                GetNextBufferIterations: _getNextBufferIterations,
+                SampleRate: _cfg.sampleRate
             }
         };
     };
@@ -438,15 +465,6 @@ window.speechcapture = (function () {
             _audioInputFrequency = sampleRate / bufferSize;
             _bufferLengthInSeconds = 1 / _audioInputFrequency;
 
-            /*var mon = {
-                sampleRate: sampleRate,
-                bufferSize: bufferSize,
-                _audioInputFrequency: _audioInputFrequency,
-                _bufferLengthInSeconds: _bufferLengthInSeconds
-            };
-
-            alert("_calculateTimePeriods: " + JSON.stringify(mon));*/
-
             _calculateAnalysisBuffers(bufferSize, _bufferLengthInSeconds, _cfg.analysisChunkLength);
         }
         catch (ex) {
@@ -474,22 +492,6 @@ window.speechcapture = (function () {
             _speechMaximumLengthChunks = Math.round(_cfg.speechDetectionMaximum / analysisChunkLength);
 
             _getNextBufferDuration = analysisChunkLength;
-
-            /*var mon = {
-                bufferSize: bufferSize,
-                bufferLengthInSeconds: bufferLengthInSeconds,
-                analysisChunkLength: analysisChunkLength,
-                inputBufferSizeInMs: inputBufferSizeInMs,
-                _noOfAnalysisBuffersPerIteration: _noOfAnalysisBuffersPerIteration,
-                _analysisBufferSize: _analysisBufferSize,
-                _analysisBufferLengthInS: _analysisBufferLengthInS,
-                _speechAllowedDelayChunks: _speechAllowedDelayChunks,
-                _speechMinimumLengthChunks: _speechMinimumLengthChunks,
-                _speechMaximumLengthChunks: _speechMaximumLengthChunks,
-                _getNextBufferDuration: _getNextBufferDuration
-            };
-
-            alert("_calculateAnalysisBuffers: " + JSON.stringify(mon));*/
         }
         catch (ex) {
             _callErrorCB("_calculateAnalysisBuffers exception: " + ex);
@@ -521,8 +523,8 @@ window.speechcapture = (function () {
             _cfg.errorCB(errorObj);
         }
 
-        showConsoleError(errorObj.message);
-        showAlert(errorObj.message);
+        _showConsoleLog(errorObj.message);
+        _showAlert(errorObj.message);
     };
 
 
@@ -536,7 +538,7 @@ window.speechcapture = (function () {
             _cfg.speechCapturedCB(speechData, _cfg.audioResultType);
         }
         else {
-            _callErrorCB("_callSpeechCapturedCB: No callback defined!");
+            _callErrorCB("_callSpeechCapturedCB: No 'speechCapturedCB' callback defined!");
         }
     };
 
@@ -549,9 +551,6 @@ window.speechcapture = (function () {
     var _callSpeechStatusCB = function (eventType) {
         if (_cfg.speechStatusCB) {
             _cfg.speechStatusCB(eventType);
-        }
-        else {
-            _callErrorCB("_callSpeechStatusCB: No callback defined!");
         }
     };
 
@@ -627,16 +626,16 @@ window.speechcapture = (function () {
             var len = audioInputBuffer.length;
 
             // If buffer isn't of the expected size, recalculate everything based on the new length
-            if(audioInputBuffer.length !== _cfg.bufferSize) {
-                _calculateTimePeriods(_cfg.sampleRate, audioInputBuffer.length);
+            if (len !== _cfg.bufferSize) {
+                _calculateTimePeriods(_cfg.inputSampleRate, len);
             }
 
             for (var i = 0; i < _noOfAnalysisBuffersPerIteration; i++) {
                 var startIdx = i * _analysisBufferSize,
                     endIdx = startIdx + _analysisBufferSize;
 
-                if (endIdx > audioInputBuffer.length) {
-                    endIdx = audioInputBuffer.length;
+                if (endIdx > len) {
+                    endIdx = len;
                 }
 
                 var buf = audioInputBuffer.slice(startIdx, endIdx);
@@ -956,27 +955,24 @@ window.speechcapture = (function () {
     var _handleAudioBufferCreation = function (speechData) {
 
         // Was the speech long enough to create an audio buffer?
-        if (_currentSpeechLength > _speechMinimumLengthChunks) { // speechData && speechData.length > 0 &&
-            var audioResult = null,
-                preEncodingBuffer = speechData.slice(0);
+        if (_currentSpeechLength > _speechMinimumLengthChunks) {
+            var preEncodingBuffer = speechData.slice(0); // Create a copy
 
             switch (_cfg.audioResultType) {
                 case AUDIO_RESULT_TYPE.WEBAUDIO_AUDIOBUFFER:
-                    audioResult = _createWebAudioBuffer(preEncodingBuffer);
+                    _createWebAudioBuffer(preEncodingBuffer);
                     break;
                 case AUDIO_RESULT_TYPE.RAW_DATA:
-                    audioResult = preEncodingBuffer;
+                    _callSpeechCapturedCB(preEncodingBuffer);
                     break;
                 case AUDIO_RESULT_TYPE.DETECTION_ONLY:
-                    audioResult = null;
+                    // We just ignore this, since we are in detection only mode.
                     break;
                 default:
                 case AUDIO_RESULT_TYPE.WAV_BLOB:
-                    audioResult = _createWAVAudioBuffer(preEncodingBuffer);
+                    _createWAVAudioBuffer(preEncodingBuffer);
                     break;
             }
-
-            _callSpeechCapturedCB(audioResult);
         }
         else {
             _noOfEventsMin++;
@@ -984,23 +980,84 @@ window.speechcapture = (function () {
         }
     };
 
+
     /**
      *
-     * @param audioDataBuffer
+     * @param rawAudioBuffer
      * @private
      */
-    var _createWAVAudioBuffer = function (audioDataBuffer) {
+    var _createWAVAudioBuffer = function (rawAudioBuffer) {
         try {
-            var wavData = wavEncoder.encode(audioDataBuffer, _cfg.sampleRate, _cfg.channels);
+            _showConsoleLog("_createWAVAudioBuffer: " + rawAudioBuffer.length);
 
-            return new Blob([wavData], {
-                type: 'audio/wav'
-            });
+            /**
+             *
+             * @param audioBuffer
+             */
+            var funcEncodeAudioBufferToWAVDataAndCallCB = function (audioBuffer) {
+                try {
+                    var rawAudioBuffer = null;
+                    if (_cfg.channels === 1) {
+                        rawAudioBuffer = audioBuffer.getChannelData(0);
+                    }
+                    else if (_cfg.channels === 2) {
+                        rawAudioBuffer = wavEncoder.interleave(audioBuffer.getChannelData(0), audioBuffer.getChannelData(1))
+                    }
+                    else {
+                        _callErrorCB("_createWAVAudioBuffer doesn't support more than two (2) channels!");
+                        _callSpeechStatusCB(STATUS.ENCODING_ERROR);
+                        return;
+                    }
+
+                    var wavData = wavEncoder.encode(rawAudioBuffer, _cfg.sampleRate, _cfg.channels);
+
+                    _callSpeechCapturedCB(new Blob([wavData], {
+                        type: 'audio/wav'
+                    }));
+                }
+                catch (ex) {
+                    _callErrorCB("_createWAVAudioBuffer (with resampling) exception: " + ex);
+                    _callSpeechStatusCB(STATUS.ENCODING_ERROR);
+                }
+            };
+
+            /**
+             *
+             * @param rawAudioBuffer
+             */
+            var funcEncodeRawAudioBufferToWAVDataAndCallCB = function (rawAudioBuffer) {
+                try {
+                    var wavData = wavEncoder.encode(rawAudioBuffer, _cfg.sampleRate, _cfg.channels);
+
+                    _callSpeechCapturedCB(new Blob([wavData], {
+                        type: 'audio/wav'
+                    }));
+                }
+                catch (ex) {
+                    _callErrorCB("_createWAVAudioBuffer exception: " + ex);
+                    _callSpeechStatusCB(STATUS.ENCODING_ERROR);
+                }
+            };
+
+            if (_cfg.inputSampleRate !== _cfg.sampleRate) {
+                if (_webAudioAPISupported) {
+                    var audioBuffer = _createAudioBufferFromRawData(rawAudioBuffer);
+                    ReSampler.resampleAudioBuffer(audioBuffer, _cfg.sampleRate, funcEncodeAudioBufferToWAVDataAndCallCB, _callErrorCB);
+                }
+                else {
+                    _callErrorCB("_createWAVAudioBuffer (with resampling) failed since Web Audio API isn't supported. " +
+                        "Remove the 'samplerate' from the start configuration in order to use the default samplerate of " +
+                        "the platform and avoid this error.");
+                    _callSpeechStatusCB(STATUS.RESAMPLING_UNSUPPORTED);
+                }
+            }
+            else {
+                funcEncodeRawAudioBufferToWAVDataAndCallCB(rawAudioBuffer);
+            }
         }
         catch (e) {
             _callErrorCB("_createWAVAudioBuffer exception: " + e);
             _callSpeechStatusCB(STATUS.ENCODING_ERROR);
-            return null;
         }
     };
 
@@ -1012,35 +1069,63 @@ window.speechcapture = (function () {
      */
     var _createWebAudioBuffer = function (rawAudioBuffer) {
         try {
-            var audioBuffer = getAudioContext().createBuffer(_captureCfg.channels, (rawAudioBuffer.length / _captureCfg.channels),
-                _captureCfg.sampleRate);
+            _showConsoleLog("_createWebAudioBuffer: " + rawAudioBuffer.length);
 
-            if (_captureCfg.channels > 1) {
-                for (var i = 0; i < _captureCfg.channels; i++) {
-                    var chdata = [],
-                        index = 0;
+            var audioBuffer = _createAudioBufferFromRawData(rawAudioBuffer);
 
-                    while (index < rawAudioBuffer.length) {
-                        chdata.push(rawAudioBuffer[index + i]);
-                        index += parseInt(_captureCfg.channels);
-                    }
-
-                    audioBuffer.getChannelData(i).set(new Float32Array(chdata));
+            if (audioBuffer.inputSampleRate !== _cfg.sampleRate) {
+                try {
+                    _showConsoleLog("_createWebAudioBuffer - Resample audio from " + _cfg.inputSampleRate + " to " + _cfg.sampleRate + ": " + rawAudioBuffer.length);
+                    ReSampler.resampleAudioBuffer(audioBuffer, _cfg.sampleRate, _callSpeechCapturedCB, _callErrorCB);
+                }
+                catch (e) {
+                    _callErrorCB("_createWebAudioBuffer resampling exception: " + e);
+                    _callSpeechStatusCB(STATUS.RESAMPLING_ERROR);
                 }
             }
             else {
-                // For just one channels (mono)
-                audioBuffer.getChannelData(0).set(rawAudioBuffer);
+                _callSpeechCapturedCB(audioBuffer);
             }
-
-            return audioBuffer;
         }
         catch (e) {
             _callErrorCB("_createWebAudioBuffer exception: " + e);
             _callSpeechStatusCB(STATUS.ENCODING_ERROR);
-            return null;
         }
     };
+
+
+    /**
+     *
+     * @param rawAudioBuffer
+     * @returns {AudioBuffer}
+     * @private
+     */
+    var _createAudioBufferFromRawData = function (rawAudioBuffer) {
+
+        var audioBuffer = getAudioContext().createBuffer(_captureCfg.channels, (rawAudioBuffer.length / _captureCfg.channels),
+            _cfg.inputSampleRate);
+
+        if (_captureCfg.channels > 1) {
+            for (var i = 0; i < _captureCfg.channels; i++) {
+                var chdata = [],
+                    index = 0;
+
+                while (index < rawAudioBuffer.length) {
+                    chdata.push(rawAudioBuffer[index + i]);
+                    index += parseInt(_captureCfg.channels);
+                }
+
+                audioBuffer.getChannelData(i).set(new Float32Array(chdata));
+            }
+        }
+        else {
+            // For just one channels (mono)
+            audioBuffer.getChannelData(0).set(rawAudioBuffer);
+        }
+
+        return audioBuffer;
+    };
+
 
     /**
      * Creates the Web Audio Context if needed
@@ -1053,25 +1138,35 @@ window.speechcapture = (function () {
             window.AudioContext = window.AudioContext || window.webkitAudioContext;
 
             if (audioCtxFromCfg) {
+                _showConsoleLog("Using Audio Context provided in cfg.");
                 _audioContext = audioCtxFromCfg;
+                _webAudioAPISupported = true;
             }
             else if (!_audioContext) {
+                _showConsoleLog("Creating new Audio Context.");
                 _audioContext = new window.AudioContext();
                 _webAudioAPISupported = true;
             }
+            else if (_audioContext) {
+                _webAudioAPISupported = true;
+            }
 
-            if (AudioContext.prototype.hasOwnProperty('createMediaStreamSource') && _cfg.getUserMediaActive) {
-                _getUserMedia = (navigator.getUserMedia || navigator.webkitGetUserMedia ||
-                navigator.mozGetUserMedia || navigator.msGetUserMedia).bind(navigator);
+            //noinspection JSUnresolvedVariable
+            _getUserMedia = (navigator.getUserMedia || navigator.webkitGetUserMedia ||
+            navigator.mozGetUserMedia || navigator.msGetUserMedia).bind(navigator);
 
-                if (_getUserMedia) {
-                    _getUserMediaSupported = true;
+            if (_getUserMedia) {
+                _getUserMediaSupported = true;
 
-                    if (preferGUM || !window.audioinput) {
-                        _getUserMediaMode = true;
-                        _cfg.sampleRate = _audioContext.sampleRate;
-                    }
+                //noinspection JSUnresolvedVariable
+                if (preferGUM || !_cfg.audioinputPluginActive || !window.audioinput) {
+                    _getUserMediaMode = true;
+                    _cfg.inputSampleRate = _audioContext.sampleRate;
+                    _showConsoleLog("The current Audio Context samplerate is: " + _cfg.inputSampleRate);
                 }
+            }
+            else {
+                _showConsoleLog("navigator.(webkit)getUserMedia is not supported on this platform.");
             }
 
             return true;
@@ -1101,10 +1196,7 @@ window.speechcapture = (function () {
                             if (_getUserMediaRunning) {
                                 try {
                                     _audioInputEvents++;
-
-                                    //var cpy = new Float32Array();
-
-                                    _audioDataQueue.push(audioProcessingEvent.inputBuffer.getChannelData(0)); // Array.prototype.slice.call(cpy)
+                                    _audioDataQueue.push(audioProcessingEvent.inputBuffer.getChannelData(0));
                                 }
                                 catch (e) {
                                     _captureStopped();
@@ -1177,11 +1269,14 @@ window.speechcapture = (function () {
         if (_getUserMediaMode) {
             return _getUserMediaRunning;
         }
-        else if (window.audioinput) {
-            return audioinput.isCapturing();
-        }
-        else {
-            return false;
+        else { //noinspection JSUnresolvedVariable
+            if (_cfg.audioinputPluginActive && window.audioinput) {
+                //noinspection JSUnresolvedVariable
+                return audioinput.isCapturing();
+            }
+            else {
+                return false;
+            }
         }
     };
 
@@ -1190,7 +1285,7 @@ window.speechcapture = (function () {
      *
      * @param message
      */
-    var showAlert = function (message) {
+    var _showAlert = function (message) {
         if (_cfg.debugAlerts && message) {
             alert(message);
         }
@@ -1201,14 +1296,13 @@ window.speechcapture = (function () {
      *
      * @param message
      */
-    var showConsoleError = function (message) {
+    var _showConsoleLog = function (message) {
         if (_cfg.debugConsole && message) {
             console.log(message);
         }
     };
 
 
-// Public interface
     return {
         STATUS: STATUS,
         AUDIO_RESULT_TYPE: AUDIO_RESULT_TYPE,
@@ -1227,22 +1321,30 @@ window.speechcapture = (function () {
         onAudioInputCapture: onAudioInputCapture,
         onAudioInputError: onAudioInputError
     };
-
 })
 ();
 
 
-// Shim for Float32Array.prototype.slice
+/******************************************************************************************************************
+ * Other functionality needed by the library
+ *****************************************************************************************************************/
+
+/*
+ Shim for Float32Array.prototype.slice
+ */
 if (!Float32Array.prototype.slice) {
+    /**
+     * If not supported: Adds slice to Float32Array
+     *
+     * @param begin - From which index to start
+     * @param end - To which index to end
+     * @returns {Float32Array} - The sliced part of the array
+     */
     Float32Array.prototype.slice = function (begin, end) {
-        if(!end) {
+        if (!end) {
             end = this.length;
         }
-
-        //alert("Float32Array.prototype.slice begin: " + begin + ", end: " + end + ", len: " + this.length + " => " + (end - begin));
-
         var target = new Float32Array(end - begin);
-
         for (var i = 0; i < begin + end; ++i) {
             target[i] = this[begin + i];
         }
@@ -1250,65 +1352,111 @@ if (!Float32Array.prototype.slice) {
     };
 }
 
-
-/**
- *
- * @returns {Float32Array}
+/*
+ Shim for Float32Array.prototype.concat
  */
-Float32Array.prototype.concat = function () {
-    var bytesPerIndex = 4,
-        buffers = Array.prototype.slice.call(arguments);
+if (!Float32Array.prototype.concat) {
+    /**
+     * If not supported: Adds concatenate to Float32Array
+     *
+     * @returns {Float32Array} - The resulting array
+     */
+    Float32Array.prototype.concat = function () {
+        //noinspection JSUnresolvedFunction
+        var bytesPerIndex = 4,
+            buffers = Array.prototype.slice.call(arguments);
 
-    // add self
-    buffers.unshift(this);
+        // add self
+        buffers.unshift(this);
 
-    buffers = buffers.map(function (item) {
-        if (item instanceof Float32Array) {
-            return item.buffer;
-        }
-        else if (item instanceof ArrayBuffer) {
-            if (item.byteLength / bytesPerIndex % 1 !== 0) {
-                throw new Error('One of the ArrayBuffers is not from a Float32Array');
+        buffers = buffers.map(function (item) {
+            if (item instanceof Float32Array) {
+                return item.buffer;
             }
-            return item;
-        }
-        else {
-            throw new Error('You can only concat Float32Array, or ArrayBuffers');
-        }
-    });
+            else if (item instanceof ArrayBuffer) {
+                if (item.byteLength / bytesPerIndex % 1 !== 0) {
+                    throw new Error('One of the ArrayBuffers is not from a Float32Array');
+                }
+                return item;
+            }
+            else {
+                throw new Error('You can only concat Float32Array, or ArrayBuffers');
+            }
+        });
 
-    var concatenatedByteLength = buffers
-        .map(function (a) {
-            return a.byteLength;
-        })
-        .reduce(function (a, b) {
-            return a + b;
-        }, 0);
+        var concatenatedByteLength = buffers
+            .map(function (a) {
+                return a.byteLength;
+            })
+            .reduce(function (a, b) {
+                return a + b;
+            }, 0);
 
-    var concatenatedArray = new Float32Array(concatenatedByteLength / bytesPerIndex);
+        var concatenatedArray = new Float32Array(concatenatedByteLength / bytesPerIndex);
 
-    var offset = 0;
-    buffers.forEach(function (buffer, index) {
-        concatenatedArray.set(new Float32Array(buffer), offset);
-        offset += buffer.byteLength / bytesPerIndex;
-    });
+        var offset = 0;
+        buffers.forEach(function (buffer) {
+            concatenatedArray.set(new Float32Array(buffer), offset);
+            offset += buffer.byteLength / bytesPerIndex;
+        });
 
-    return concatenatedArray;
-};
+        return concatenatedArray;
+    };
+}
+
+/*
+ * Down or upsample an audiobuffer. Define your own ReSampler if you want to override this with something else.
+ */
+var ReSampler = (function () {
+    /**
+     *
+     * @param audioBuffer
+     * @param toSampleRate
+     * @param oncomplete
+     * @param onError
+     */
+    var resampleAudioBuffer = function (audioBuffer, toSampleRate, oncomplete, onError) {
+        var numCh = audioBuffer.numberOfChannels;
+        var numFrames = audioBuffer.length * toSampleRate / audioBuffer.sampleRate;
+        var offlineContext_ = new OfflineAudioContext(numCh, numFrames, toSampleRate);
+        var bufferSource_ = offlineContext_.createBufferSource();
+        bufferSource_.buffer = audioBuffer;
+
+        offlineContext_.oncomplete = function (event) {
+            try {
+                //noinspection JSUnresolvedVariable
+                var resampledBuffer = event.renderedBuffer;
+                if (oncomplete && typeof oncomplete === 'function') {
+                    oncomplete(resampledBuffer);
+                }
+            }
+            catch (e) {
+                if (onError && typeof onError === 'function') {
+                    onError("ReSampler.resampleAudioBuffer offlineContext_.oncomplete exception: " + e);
+                }
+            }
+        };
+
+        bufferSource_.connect(offlineContext_.destination);
+        bufferSource_.start(0);
+        offlineContext_.startRendering();
+    };
+
+    return {
+        resampleAudioBuffer: resampleAudioBuffer
+    }
+})();
 
 
-
-/**
- *
- * @type {{encode}}
+/*
+ * Encode data to WAV format. Define your own 'wavEncode' if you want to override this with something else.
  */
 var wavEncoder = (function () {
-
     /**
      *
      * @param samples - The sample array
-     * @param sampleRate - The sampe rate
-     * @param channels - The number of channels
+     * @param {int} sampleRate - The sample rate
+     * @param {int} channels - The number of channels
      * @returns {DataView}
      */
     var encode = function (samples, sampleRate, channels) {
@@ -1346,7 +1494,7 @@ var wavEncoder = (function () {
      *
      * @param view
      * @param offset
-     * @param string
+     * @param {String} string
      */
     var writeString = function (view, offset, string) {
         for (var i = 0; i < string.length; i++) {
@@ -1367,8 +1515,29 @@ var wavEncoder = (function () {
         }
     };
 
-    // Public interface
+    /**
+     *
+     * @param inputL
+     * @param inputR
+     * @returns {Float32Array}
+     */
+    var interleave = function (inputL, inputR) {
+        var length = inputL.length + inputR.length;
+        var result = new Float32Array(length);
+
+        var index = 0;
+        var inputIndex = 0;
+
+        while (index < length) {
+            result[index++] = inputL[inputIndex];
+            result[index++] = inputR[inputIndex];
+            inputIndex++
+        }
+        return result
+    };
+
     return {
-        encode: encode
+        encode: encode,
+        interleave: interleave
     };
 })();

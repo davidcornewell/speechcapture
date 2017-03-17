@@ -31,6 +31,7 @@ function onSpeechCaptured(audioBuffer, type) {
 function onSpeechError(error) {
     totalNoOfSpeechErrors++;
     alert("onSpeechError event recieved: " + JSON.stringify(error));
+    stopCapture();
 }
 
 
@@ -44,10 +45,11 @@ function onSpeechStatus(code) {
     switch (code) {
         case speechcapture.STATUS.CAPTURE_STARTED:
             consoleMessage("Capture Started!");
+            turnOffSpeakingRightNowIndicator();
             break;
         case speechcapture.STATUS.CAPTURE_STOPPED:
             consoleMessage("Capture Stopped!");
-            turnOffSpeakingRightNowIndicator();
+            resetSpeakingRightNowIndicator();
             break;
         case speechcapture.STATUS.SPEECH_STARTED:
             consoleMessage("Speech Started!");
@@ -127,6 +129,7 @@ var startCapture = function () {
                 compressPauses: compressPauses,
                 preferGUM: preferGUM,
                 detectOnly: detectOnly,
+                audioInputPluginActive: true,
                 debugAlerts: true, // Just for debug
                 debugConsole: true // Just for debug
             };
@@ -170,10 +173,10 @@ var stopCapture = function () {
             }
 
             speechcapture.stop();
-
-            disableStopButton();
-            resetSpeakingRightNowIndicator();
         }
+
+        resetSpeakingRightNowIndicator();
+        disableStopButton();
     }
     catch (e) {
         alert("stopCapture exception: " + e);

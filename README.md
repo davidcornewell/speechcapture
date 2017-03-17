@@ -1,14 +1,25 @@
 # Speech Capture
-Speech detection and capture library used to detect and capture speech from an incoming audio stream of data, typically from the microphone.
+Speech detection and capture library used to detect and capture speech from an incoming audio stream of data, typically 
+from the microphone.
 
-When started, the overall ambient audio level is continuously calculated from the characteristics of the audio input. The ambient audio level together with the threshold for speech detection, are used to generate a dynamic threshold in real-time. When the current audio levels surpasses the dynamic threshold, speech capture starts and ends when the current levels decreases below the threshold. A number of parameters also allows you to, among other things, specify the minimum and maximum length of captured speech as well as the allowed delay before capture is stopped. This particular method seems to provide a good balance between performance and quality.
+When capture is started, the overall ambient audio level is continuously calculated from the characteristics of the audio 
+input. The ambient audio level together with the threshold for speech detection, are used to generate a dynamic threshold 
+in real-time. When the current audio levels surpasses the dynamic threshold, speech capture starts and ends when the 
+current levels decreases below the threshold. A number of parameters also allows you to, among other things, specify the 
+minimum and maximum length of captured speech as well as the allowed delay before capture is stopped. This particular 
+method seems to provide a good balance between performance and quality.
+
+Supports resampling (up or down) of the captured audio, and together with the **compressPauses** parameter, this library
+can be used not only for speech detection & capture, but also to minimize the amount of audio sent to a server or saved 
+to a file.
 
 Currently this library supports two types of audio input:
 * __[getUserMedia](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/getUserMedia)__
 * __Apache Cordova__ plugin __[cordova-plugin-audioinput](https://github.com/edimuj/cordova-plugin-audioinput)__
 
-This means that you can use the library in traditional web browsers that __[supports getUserMedia](http://caniuse.com/#feat=stream)__, and in Apache Cordova hybrid apps together with the __[cordova-plugin-audioinput](https://github.com/edimuj/cordova-plugin-audioinput)__ plugin.
-
+This means that you can use the library in traditional web browsers that 
+__[supports getUserMedia](http://caniuse.com/#feat=stream)__, and in Apache Cordova hybrid apps together with the 
+__[cordova-plugin-audioinput](https://github.com/edimuj/cordova-plugin-audioinput)__ plugin.
 
 ## Installation
 
@@ -110,8 +121,16 @@ function speechStatusCB( code ) {
 
 ```javascript
 cfg = {
-  // The sample rate to use for capturing audio. Not supported on all platforms.
-  sampleRate: 22050, // Hz
+  // The sample rate for captured audio results.
+  // Since the sample rate of the input device not always can be changed, the library will resample the audio if needed,
+  // but this requires web audio support since OfflineAudioContext is used for the resampling.
+  sampleRate: 16000, // Hz
+  
+  // The preferred sample rate that the input device should use when capturing audio.
+  // Since the sample rate cannot be changed or have additional limits on some platforms, this parameter may be ignored, 
+  // so use the sampleRate parameter above to ensure that audio is resampled to the required sampleRate in your specific 
+  // scenario.
+  inputSampleRate: 22050, // Hz
   
   // Threshold for capturing speech.
   // The audio level must rise to at least the threshold for speech capturing to start.
@@ -130,7 +149,8 @@ cfg = {
   // Shorter gives better results, while longer gives better performance.
   analysisChunkLength: 100, // mS
   
-  // Removes long pauses from the captured output.
+  // Removes pauses/silence from the captured output. Will not concatenate all words aggressively, 
+  // so individual words should still be identifiable in the result.
   compressPauses: false,
   
   // Do not capture any data, just speech detection events. 
@@ -141,9 +161,14 @@ cfg = {
   // For convenience, use the speechcapture.AUDIO_RESULT_TYPE constants to set this parameter:
   // -WAV_BLOB (1) - WAV encoded Audio blobs
   // -WEBAUDIO_AUDIOBUFFER (2) - Web Audio API AudioBuffers
-  // -RAW_DATA (3) - Float32Arrays with the raw audio data
+  // -RAW_DATA (3) - Float32Arrays with the raw audio data, doesn't support resampling
   // -DETECTION_ONLY (4) - Used automatically when detectOnly is true
   audioResultType: speechcapture.AUDIO_RESULT_TYPE.WAV_BLOB,
+  
+  // Specify an existing audioContext if your application uses the Web Audio API. If no audioContext is specified,
+  // the library will try to create one. The audioContext is only used if the audioResultType is set to 
+  // WEBAUDIO_AUDIOBUFFER or if resampling is required (sampleRate != inputSampleRate).
+  //
   audioContext: null,
   
   // Only applicable if cordova-plugin-audioinput is used as the audio source.
@@ -163,6 +188,12 @@ cfg = {
   
   // Prefer audio input using getUserMedia and use cordova-plugin-audioinput only as a fallback. Only useful if both are supported by the current platform.
   preferGUM: false,
+  
+  // Enable or disable the usage of the cordova-plugin-audioinput plugin even if it is available.
+  audioinputPluginActive: true,
+  
+  // Enable or disable the usage of the getUserMedia as audio input even if it is available.
+  getUserMediaActive: true,
   
   // Use window.alert and/or window.console to show errors
   debugAlerts: false, 
