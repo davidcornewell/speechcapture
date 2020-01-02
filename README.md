@@ -26,8 +26,8 @@ __[cordova-plugin-audioinput](https://github.com/edimuj/cordova-plugin-audioinpu
 Downloads:
 Include any of the following sources in your project:
 
-- [speechcapture.js](https://raw.githubusercontent.com/edimuj/speechcapture/master/src/speechcapture.js)
-- [speechcapture.min.js](https://raw.githubusercontent.com/edimuj/speechcapture/master/dist/speechcapture.min.js)
+- [speechcapture.js](https://raw.githubusercontent.com/aitorbajo/speechcapture/master/src/speechcapture.js)
+- [speechcapture.min.js](https://raw.githubusercontent.com/aitorbajo/speechcapture/master/dist/speechcapture.min.js)
 
 
 ## API
