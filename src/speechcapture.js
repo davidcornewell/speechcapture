@@ -235,9 +235,7 @@ window.speechcapture = (function () {
             audioinput.stop();
         }
 
-        if (_currentSpeechHistory.length > 0) {
-            _handleAudioBufferCreation(_currentSpeechHistory);
-        }
+        _handleAudioBufferCreation(_currentSpeechHistory);
 
         _captureStopped();
         _resetAll();
