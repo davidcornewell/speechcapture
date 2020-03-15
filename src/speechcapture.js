@@ -1240,8 +1240,8 @@ window.speechcapture = (function () {
                 _streamSourceProcessor.onaudioprocess = null;
             }
             _streamSourceProcessor = null;
-            _callSpeechStatusCB(STATUS.CAPTURE_STOPPED);
         }
+        _callSpeechStatusCB(STATUS.CAPTURE_STOPPED);
     };
 
 
